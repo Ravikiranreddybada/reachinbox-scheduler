@@ -38,12 +38,13 @@ This prevents duplicates caused by browser retries, reverse-proxy retries, and c
 
 ## Rate limiting and fairness
 
-One Redis Lua script checks and increments two UTC-hour counters atomically:
+One Redis Lua script checks and increments three UTC-hour counters atomically:
 
 - sender counter: tenant + sender + hour;
+- campaign counter: tenant + campaign + hour;
 - global counter: tenant + hour.
 
-No worker can consume one counter without the other. When either limit is full, BullMQ moves the job to the next exact UTC hour boundary. A Redis `SET NX` key emits at most one Slack alert for each tenant, sender, scope, and window.
+No worker can consume one counter without the others. When any limit is full, BullMQ moves the job to the next exact UTC hour boundary. A Redis `SET NX` key emits at most one Slack alert for each tenant, sender, scope, and window. The effective cap is the minimum of the configured campaign, sender, and tenant limits.
 
 BullMQ's limiter enforces the configured minimum spacing across worker replicas. Worker concurrency controls in-flight SMTP work independently. This separates throughput from quota policy.
 

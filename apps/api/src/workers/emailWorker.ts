@@ -42,6 +42,7 @@ async function processEmail(job: Job<{ emailId: string }, void, 'deliver'>): Pro
   const slot = await acquireSenderSlot(
     email.userId,
     email.senderId,
+    email.campaignId,
     email.sender.email,
     email.campaign.hourlyLimit,
   );

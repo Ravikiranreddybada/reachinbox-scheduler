@@ -6,7 +6,7 @@ A full-stack email scheduling workspace built around durable delayed jobs. The a
 
 - TypeScript Express API and independent BullMQ worker.
 - Persistent PostgreSQL records, stable BullMQ job IDs, payload-bound request idempotency, processing leases, and startup reconciliation for missing or stranded work.
-- Configurable parallel worker capacity, a queue-wide send interval, and atomic Redis sender plus tenant-wide hourly limits. A sender limit can be set per campaign or inherited from `MAX_EMAILS_PER_HOUR_PER_SENDER`.
+- Configurable parallel worker capacity, a queue-wide send interval, and atomic Redis campaign, sender, and tenant-wide hourly limits. Campaign limits are independent; the sender and tenant caps still apply.
 - Jobs that reach an hourly limit move to the next UTC hour window; they remain in BullMQ and are not discarded. A connected Slack incoming webhook receives one notification per sender and rate-limit window.
 - Elasticsearch indexing/search, a live Bull Board queue view, Google OAuth login, Slack OAuth connect/disconnect, CSV/text recipient import, scheduled/sent views, and responsive dashboard.
 - Docker Compose for PostgreSQL, Redis, and Elasticsearch.
@@ -30,7 +30,7 @@ flowchart LR
 
 The API writes a campaign and every recipient in one database transaction before queueing. The campaign idempotency key is bound to a canonical payload hash: an identical retry returns the original campaign, while a changed payload returns `409 Conflict`. Each recipient receives a stable job ID and a unique `(userId, idempotencyKey)` constraint. On API or worker startup and every five minutes while the API runs, reconciliation restores missing `SCHEDULED` jobs and reclaims `PROCESSING` rows whose lease expired. BullMQ delayed jobs survive worker/API restarts because Redis persistence is enabled. PostgreSQL remains authoritative for lifecycle state.
 
-Workers use bounded concurrency, BullMQ's distributed queue limiter for minimum spacing, and one Redis Lua script that atomically checks per-sender and tenant-wide hourly counters across replicas. If either capacity is exhausted, the worker moves the current job to the start of the next UTC hour. Slack notifications are deduplicated by sender, limit scope, and hour. Ethereal SMTP is an external side effect: the system uses stable job IDs and durable state to prevent ordinary duplicate processing, but SMTP does not offer an idempotency key, so a process crash after SMTP accepts a message and before PostgreSQL records `SENT` cannot be made mathematically exactly-once. This boundary is called out rather than hidden.
+Workers use bounded concurrency, BullMQ's distributed queue limiter for minimum spacing, and one Redis Lua script that atomically checks campaign, sender, and tenant-wide hourly counters across replicas. If any capacity is exhausted, the worker moves the current job to the start of the next UTC hour. The effective cap is the lowest applicable cap. Slack notifications are deduplicated by sender, limit scope, and hour. Ethereal SMTP is an external side effect: the system uses stable job IDs and durable state to prevent ordinary duplicate processing, but SMTP does not offer an idempotency key, so a process crash after SMTP accepts a message and before PostgreSQL records `SENT` cannot be made mathematically exactly-once. This boundary is called out rather than hidden.
 
 The detailed [architecture decisions](docs/architecture.md), interactive [architecture diagram](docs/system-architecture.html), [OpenAPI contract](docs/openapi.yaml), and [assignment checklist](docs/assignment-brief.md) are included for review.
 
@@ -62,7 +62,7 @@ Rebuild the Elasticsearch projection at any time with `pnpm --filter @reachinbox
 | `ETHEREAL_HOST`, `ETHEREAL_PORT`                                  | SMTP server; defaults to Ethereal host and port 587                                     |
 | `WORKER_CONCURRENCY`                                              | Per-worker concurrent job capacity (1–100)                                              |
 | `MIN_SEND_INTERVAL_MS`                                            | Minimum queue-wide spacing between sends; defaults to 2 seconds                         |
-| `MAX_EMAILS_PER_HOUR_PER_SENDER`                                  | Fallback per-sender UTC-hour cap; campaign cap overrides this value                     |
+| `MAX_EMAILS_PER_HOUR_PER_SENDER`                                  | Per-sender UTC-hour cap across campaigns; a campaign limit adds a separate cap          |
 | `MAX_EMAILS_PER_HOUR_GLOBAL`                                      | Tenant-wide UTC-hour cap shared by every sender and worker replica                      |
 | `PROCESSING_LEASE_MS`                                             | Age after which stranded `PROCESSING` rows can be recovered                             |
 | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`    | Slack app OAuth; request the `incoming-webhook` scope and set the matching callback URL |
@@ -87,7 +87,7 @@ Google OAuth and Slack OAuth are real flows; credentials cannot be bundled in th
 
 - PostgreSQL owns business state. Redis is a recoverable execution index; a production deployment should run Redis with managed persistence/replication and alert on queue lag.
 - The search index is a projection and should be rebuilt from PostgreSQL if needed. Production hardening would move indexing to a transactional outbox so transient Elasticsearch outages never fail delivery bookkeeping.
-- OAuth sessions are signed HTTP-only cookies. A production deployment should add CSRF protection, key rotation, encrypted secret storage, and tenant-level authorization policies.
+- OAuth sessions are signed HTTP-only cookies. Mutating browser requests validate their origin. A production deployment should add key rotation, encrypted secret storage, and tenant-level authorization policies.
 - Campaign-level limits are immutable campaign settings, so later campaigns cannot change the pacing of already queued work. A production scheduler could additionally model durable sender and provider policies hierarchically.
 - No cron jobs are used. Delayed BullMQ jobs and a startup reconciliation scan drive scheduling and recovery.
 

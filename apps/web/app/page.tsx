@@ -260,8 +260,9 @@ export default function Home() {
       selectTab('SCHEDULED');
       setSearch('');
       setRefreshKey((key) => key + 1);
+      return null;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not schedule emails.');
+      return e instanceof Error ? e.message : 'Could not schedule emails. Please try again.';
     } finally {
       setBusy(false);
     }
@@ -861,7 +862,7 @@ function ComposeModal({
 }: {
   user: User;
   onClose: () => void;
-  onSubmit: (payload: SchedulePayload) => void | Promise<void>;
+  onSubmit: (payload: SchedulePayload) => Promise<string | null>;
   busy: boolean;
 }) {
   const [emails, setEmails] = useState<string[]>([]),
@@ -938,7 +939,7 @@ function ComposeModal({
     setFileName(file.name);
     setFormError(found.length ? '' : 'No valid email addresses were found in this file.');
   }
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!emails.length)
       return setFormError('Add at least one valid recipient using a CSV or text file.');
@@ -948,7 +949,7 @@ function ComposeModal({
     if (Number.isNaN(time.getTime()) || time.getTime() < Date.now())
       return setFormError('Choose a start time in the future.');
     setFormError('');
-    onSubmit({
+    const submissionError = await onSubmit({
       sender,
       senderName,
       recipients: emails,
@@ -959,6 +960,7 @@ function ComposeModal({
       hourlyLimit: hourly,
       idempotencyKey,
     });
+    if (submissionError) setFormError(submissionError);
   }
   return (
     <div
