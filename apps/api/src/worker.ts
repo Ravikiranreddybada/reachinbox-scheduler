@@ -1,9 +1,10 @@
-import { worker } from './workers/emailWorker.js';
+import { worker, verifyDeliveryTransport } from './workers/emailWorker.js';
 import { elastic, prisma, redis } from './lib/infra.js';
 import { emailQueue } from './queues/emailQueue.js';
 import { ensureSearchIndex } from './services/search.js';
 import { reconcileDeliveryQueue } from './services/recovery.js';
 void Promise.all([
+  verifyDeliveryTransport(),
   ensureSearchIndex()
     .then(() => true)
     .catch((error) => {
@@ -12,12 +13,18 @@ void Promise.all([
     }),
   reconcileDeliveryQueue(),
 ])
-  .then(([searchReady, recovery]) =>
-    console.info({ event: 'worker.started', searchReady, recovery }),
-  )
-  .catch((error) => {
-    console.error('Worker startup failed', error);
-    process.exit(1);
+  .then(async ([, searchReady, recovery]) => {
+    void worker.run();
+    console.info({ event: 'worker.started', searchReady, recovery });
+  })
+  .catch(async (error) => {
+    console.error({ event: 'worker.startup_failed', code: error?.code, message: error?.message });
+    await worker.close();
+    await emailQueue.close();
+    await prisma.$disconnect();
+    await redis.quit();
+    await elastic.close();
+    process.exitCode = 1;
   });
 async function shutdown() {
   await worker.close();

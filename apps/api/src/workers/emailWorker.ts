@@ -18,6 +18,15 @@ const transport = nodemailer.createTransport({
   maxConnections: env.WORKER_CONCURRENCY,
 });
 
+export async function verifyDeliveryTransport(): Promise<void> {
+  if (!env.ETHEREAL_USER || !env.ETHEREAL_PASSWORD) {
+    throw new Error(
+      'Ethereal SMTP credentials are missing. Configure ETHEREAL_USER and ETHEREAL_PASSWORD.',
+    );
+  }
+  await transport.verify();
+}
+
 async function updateSearch(emailId: string, context: string): Promise<void> {
   const email = await prisma.email.findUnique({ where: { id: emailId } });
   if (!email) return;
@@ -110,6 +119,7 @@ async function processEmail(job: Job<{ emailId: string }, void, 'deliver'>): Pro
 
 export const worker = new Worker(EMAIL_QUEUE, processEmail, {
   connection: redis,
+  autorun: false,
   concurrency: env.WORKER_CONCURRENCY,
   ...(env.MIN_SEND_INTERVAL_MS > 0
     ? { limiter: { max: 1, duration: env.MIN_SEND_INTERVAL_MS } }

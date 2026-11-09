@@ -89,7 +89,7 @@ Google OAuth and Slack OAuth are real flows; credentials cannot be bundled in th
 - The search index is a projection and should be rebuilt from PostgreSQL if needed. Production hardening would move indexing to a transactional outbox so transient Elasticsearch outages never fail delivery bookkeeping.
 - OAuth sessions are signed HTTP-only cookies. Mutating browser requests validate their origin. A production deployment should add key rotation, encrypted secret storage, and tenant-level authorization policies.
 - Campaign-level limits are immutable campaign settings, so later campaigns cannot change the pacing of already queued work. A production scheduler could additionally model durable sender and provider policies hierarchically.
-- No cron jobs are used. Delayed BullMQ jobs and a startup reconciliation scan drive scheduling and recovery.
+- No cron jobs are used. Delayed BullMQ jobs and startup plus periodic reconciliation drive scheduling and recovery. The worker validates SMTP credentials before consuming jobs.
 
 ## Verification
 
