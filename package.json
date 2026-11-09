@@ -1,0 +1,23 @@
+{
+  "name": "reachinbox-scheduler",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"pnpm --filter @reachinbox/api dev\" \"pnpm --filter @reachinbox/web dev\"",
+    "build": "pnpm -r build",
+    "db:generate": "pnpm --filter @reachinbox/api prisma:generate",
+    "db:migrate": "pnpm --filter @reachinbox/api prisma:migrate",
+    "worker": "pnpm --filter @reachinbox/api worker",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "pnpm format:check && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.5"
+  }
+}

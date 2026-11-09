@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EmailStatus {
+  SCHEDULED
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id              String           @id @default(cuid())
+  googleId        String           @unique
+  email           String           @unique
+  name            String
+  avatarUrl       String?
+  createdAt       DateTime         @default(now())
+  senders         Sender[]
+  emails          Email[]
+  campaigns       Campaign[]
+  slackConnection SlackConnection?
+}
+
+model Campaign {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  idempotencyKey String
+  payloadHash    String
+  hourlyLimit    Int?
+  createdAt      DateTime @default(now())
+  emails         Email[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+}
+
+model Sender {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email       String
+  displayName String?
+  createdAt   DateTime @default(now())
+  emails      Email[]
+
+  @@unique([userId, email])
+  @@index([userId])
+}
+
+model Email {
+  id             String      @id @default(cuid())
+  userId         String
+  senderId       String
+  campaignId     String
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sender         Sender      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  campaign       Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient      String
+  subject         String
+  body            String      @db.Text
+  scheduledAt     DateTime
+  sentAt          DateTime?
+  status          EmailStatus @default(SCHEDULED)
+  errorMessage    String?
+  idempotencyKey  String
+  attempts        Int         @default(0)
+  processingStartedAt DateTime?
+  providerMessageId   String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, status, scheduledAt])
+  @@index([senderId, status, scheduledAt])
+  @@index([status, processingStartedAt])
+  @@index([campaignId])
+}
+
+model SlackConnection {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId      String
+  teamName    String?
+  webhookUrl  String
+  accessToken String?
+  connectedAt DateTime @default(now())
+}

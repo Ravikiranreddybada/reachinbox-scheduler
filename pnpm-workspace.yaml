@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+overrides:
+  '@opentelemetry/api': 1.9.0
+  deepmerge-ts: ^8.0.0
+  postcss: ^8.5.23
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true

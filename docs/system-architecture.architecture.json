@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ReachInbox durable email scheduling architecture",
+    "quality_profile": "showcase",
+    "viewBox": [1380, 560],
+    "views": [
+      {
+        "id": "schedule-path",
+        "label": "Schedule and deliver",
+        "focus": ["web", "api", "postgres", "queue", "worker", "smtp"],
+        "note": "Durable database state is written before work enters the asynchronous delivery path."
+      },
+      {
+        "id": "governance-path",
+        "label": "Rate limits and recovery",
+        "focus": ["postgres", "redis", "queue", "worker", "slack"],
+        "note": "Atomic counters, delayed jobs, stable identifiers, and recovery scans preserve scheduled work."
+      },
+      {
+        "id": "discovery-path",
+        "label": "Search and identity",
+        "focus": ["google", "api", "postgres", "elasticsearch", "web"],
+        "note": "OAuth scopes every operation to a tenant while Elasticsearch serves operational search."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Next.js web app",
+      "sublabel": "Campaign operations UI",
+      "pos": [50, 210],
+      "size": [150, 76]
+    },
+    {
+      "id": "google",
+      "type": "security",
+      "label": "Google OAuth",
+      "sublabel": "User identity",
+      "pos": [300, 50],
+      "size": [150, 76]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Express API",
+      "sublabel": "Validation and tenancy",
+      "pos": [300, 210],
+      "size": [150, 76]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "Source of truth",
+      "pos": [675, 50],
+      "size": [150, 76]
+    },
+    {
+      "id": "queue",
+      "type": "messagebus",
+      "label": "BullMQ",
+      "sublabel": "Durable delayed jobs",
+      "pos": [550, 210],
+      "size": [150, 76]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "Queue and atomic quotas",
+      "pos": [675, 370],
+      "size": [150, 76]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Email worker",
+      "sublabel": "Pacing and delivery",
+      "pos": [800, 210],
+      "size": [150, 76]
+    },
+    {
+      "id": "smtp",
+      "type": "external",
+      "label": "Ethereal SMTP",
+      "sublabel": "Message transport",
+      "pos": [1050, 210],
+      "size": [150, 76]
+    },
+    {
+      "id": "slack",
+      "type": "external",
+      "label": "Slack",
+      "sublabel": "Quota notifications",
+      "pos": [1050, 50],
+      "size": [150, 76]
+    },
+    {
+      "id": "elasticsearch",
+      "type": "database",
+      "label": "Elasticsearch",
+      "sublabel": "Operational search index",
+      "pos": [1050, 370],
+      "size": [150, 76]
+    }
+  ],
+  "connections": [
+    {
+      "id": "identity",
+      "from": "google",
+      "to": "api",
+      "label": "OAuth callback",
+      "variant": "security",
+      "labelAt": [420, 155]
+    },
+    {
+      "id": "web-api",
+      "from": "web",
+      "to": "api",
+      "label": "HTTPS + session cookie",
+      "variant": "emphasis",
+      "labelAt": [250, 195]
+    },
+    {
+      "id": "api-db",
+      "from": "api",
+      "to": "postgres",
+      "label": "transactional state",
+      "labelAt": [560, 145]
+    },
+    {
+      "id": "api-queue",
+      "from": "api",
+      "to": "queue",
+      "label": "stable email job ID",
+      "variant": "emphasis",
+      "labelAt": [500, 300]
+    },
+    {
+      "id": "queue-redis",
+      "from": "queue",
+      "to": "redis",
+      "label": "AOF queue state",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [610, 325]
+    },
+    {
+      "id": "queue-worker",
+      "from": "queue",
+      "to": "worker",
+      "label": "delayed delivery job",
+      "variant": "emphasis",
+      "labelAt": [750, 195]
+    },
+    {
+      "id": "worker-db",
+      "from": "worker",
+      "to": "postgres",
+      "label": "status transition",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [825, 145]
+    },
+    {
+      "id": "worker-redis",
+      "from": "worker",
+      "to": "redis",
+      "label": "atomic quota",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [875, 325]
+    },
+    {
+      "id": "worker-smtp",
+      "from": "worker",
+      "to": "smtp",
+      "label": "SMTP send",
+      "variant": "emphasis",
+      "labelAt": [950, 300]
+    },
+    {
+      "id": "worker-slack",
+      "from": "worker",
+      "to": "slack",
+      "label": "quota alert",
+      "variant": "dashed",
+      "labelAt": [1010, 145]
+    },
+    {
+      "id": "worker-search",
+      "from": "worker",
+      "to": "elasticsearch",
+      "label": "index projection",
+      "variant": "dashed",
+      "labelAt": [1010, 325]
+    },
+    {
+      "id": "api-search",
+      "from": "api",
+      "to": "elasticsearch",
+      "label": "tenant-filtered search",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [375, 500],
+        [1125, 500]
+      ],
+      "labelAt": [750, 500]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Durability contract",
+      "items": [
+        "PostgreSQL owns business state; Redis owns execution state",
+        "Stable job IDs and startup reconciliation recover missing queue work"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Delivery semantics",
+      "items": [
+        "At-least-once processing with idempotent scheduling",
+        "SMTP acknowledgement crash windows are documented explicitly"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Scale path",
+      "items": [
+        "Stateless API and horizontally scalable workers",
+        "Redis Lua counters coordinate limits across worker replicas"
+      ]
+    }
+  ]
+}

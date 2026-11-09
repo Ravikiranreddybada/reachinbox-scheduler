@@ -1,0 +1,45 @@
+{
+  "name": "@reachinbox/api",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "worker": "tsx src/worker.ts",
+    "reindex": "tsx src/reindex.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "prisma:generate": "dotenv -e ../../.env -- prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
+    "prisma:migrate:dev": "dotenv -e ../../.env -- prisma migrate dev --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@bull-board/api": "^6.5.4",
+    "@bull-board/express": "^6.5.4",
+    "@elastic/elasticsearch": "^8.17.0",
+    "@prisma/client": "^6.0.0",
+    "bullmq": "^5.34.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "google-auth-library": "^11.3.1",
+    "ioredis": "^5.4.2",
+    "jose": "^5.9.6",
+    "nodemailer": "^10.2.1",
+    "pino": "^9.6.0",
+    "pino-http": "^10.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/nodemailer": "^8.0.2",
+    "dotenv-cli": "^8.0.0",
+    "prisma": "^6.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

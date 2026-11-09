@@ -1,0 +1,29 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://reachinbox:reachinbox@localhost:5432/reachinbox
+      SESSION_SECRET: ci-only-session-secret-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @reachinbox/api exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm verify
+      - run: pnpm audit --prod
+      - run: pnpm --filter @reachinbox/api exec prisma validate --schema prisma/schema.prisma
