@@ -3,6 +3,6 @@ node_modules
 dist
 coverage
 pnpm-lock.yaml
-docs/system-architecture.html
-docs/system-architecture.architecture.json.snapshot.json
+docs/architecture/diagrams/system-architecture.html
+docs/architecture/diagrams/system-architecture.architecture.json.snapshot.json
 apps/web/next-env.d.ts

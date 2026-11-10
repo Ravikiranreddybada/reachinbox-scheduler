@@ -6,5 +6,8 @@ dist
 coverage
 .DS_Store
 *.log
-docs/system-architecture.visual-check.*
-docs/system-architecture.architecture.json.snapshot.json
+docs/architecture/diagrams/system-architecture.architecture.json.snapshot.json
+*.tsbuildinfo
+
+# Local assistant settings
+.claude/

@@ -17,7 +17,8 @@ enum EmailStatus {
 
 model User {
   id              String           @id @default(cuid())
-  googleId        String           @unique
+  googleId        String?          @unique
+  passwordHash    String?
   email           String           @unique
   name            String
   avatarUrl       String?
@@ -25,18 +26,23 @@ model User {
   senders         Sender[]
   emails          Email[]
   campaigns       Campaign[]
+  attachments     Attachment[]
   slackConnection SlackConnection?
 }
 
 model Campaign {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   idempotencyKey String
   payloadHash    String
   hourlyLimit    Int?
-  createdAt      DateTime @default(now())
+  subject        String    @default("")
+  recipientCount Int       @default(0)
+  startsAt       DateTime?
+  createdAt      DateTime  @default(now())
   emails         Email[]
+  attachments    Attachment[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
@@ -56,32 +62,53 @@ model Sender {
 }
 
 model Email {
-  id             String      @id @default(cuid())
-  userId         String
-  senderId       String
-  campaignId     String
-  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sender         Sender      @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  campaign       Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  recipient      String
-  subject         String
-  body            String      @db.Text
-  scheduledAt     DateTime
-  sentAt          DateTime?
-  status          EmailStatus @default(SCHEDULED)
-  errorMessage    String?
-  idempotencyKey  String
-  attempts        Int         @default(0)
+  id                  String      @id @default(cuid())
+  userId              String
+  senderId            String
+  campaignId          String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sender              Sender      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  campaign            Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient           String
+  subject             String
+  body                String      @db.Text
+  scheduledAt         DateTime
+  sentAt              DateTime?
+  status              EmailStatus @default(SCHEDULED)
+  errorMessage        String?
+  idempotencyKey      String
+  attempts            Int         @default(0)
   processingStartedAt DateTime?
   providerMessageId   String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  starred             Boolean     @default(false)
+  archivedAt          DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
 
   @@unique([userId, idempotencyKey])
   @@index([userId, status, scheduledAt])
+  @@index([userId, status, sentAt])
   @@index([senderId, status, scheduledAt])
   @@index([status, processingStartedAt])
-  @@index([campaignId])
+  @@index([campaignId, status])
+  @@index([userId, deletedAt, archivedAt])
+}
+
+model Attachment {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Null until the attachment is linked to a campaign at schedule time.
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  filename    String
+  contentType String
+  size        Int
+  data        Bytes
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, campaignId])
 }
 
 model SlackConnection {
@@ -90,7 +117,10 @@ model SlackConnection {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   teamId      String
   teamName    String?
+  channelName String?
+  /// AES-256-GCM ciphertext (enc:v1:...). See src/lib/crypto.ts.
   webhookUrl  String
+  /// AES-256-GCM ciphertext (enc:v1:...).
   accessToken String?
   connectedAt DateTime @default(now())
 }

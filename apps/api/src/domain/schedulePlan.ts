@@ -9,6 +9,7 @@ export interface SchedulePlanInput {
   scheduledAt: string;
   delayBetweenMs: number;
   hourlyLimit?: number;
+  attachmentIds?: string[];
   idempotencyKey: string;
 }
 
@@ -39,6 +40,8 @@ export function buildSchedulePlan(input: SchedulePlanInput): {
     scheduledAt: start.toISOString(),
     delayBetweenMs: input.delayBetweenMs,
     hourlyLimit: input.hourlyLimit ?? null,
+    // Only present when used, so payloads without attachments keep their old hash.
+    ...(input.attachmentIds?.length ? { attachmentIds: [...input.attachmentIds].sort() } : {}),
   });
 
   return {

@@ -1,10 +1,13 @@
-import { prisma, elastic } from './lib/infra.js';
-import { ensureSearchIndex } from './services/search.js';
+import { elastic, prisma } from './lib/infra.js';
+import { logger } from './lib/logger.js';
+import { ensureSearchIndex, indexEmails } from './services/search.js';
 
+/** Rebuilds the search projection from PostgreSQL, the source of truth. */
 async function reindex() {
   await ensureSearchIndex();
   let cursor: string | undefined;
-  let processed = 0;
+  let indexed = 0;
+  let stale = 0;
   for (;;) {
     const rows = await prisma.email.findMany({
       take: 500,
@@ -12,33 +15,22 @@ async function reindex() {
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
     if (!rows.length) break;
-    const operations = rows.flatMap((email) => [
-      { index: { _index: 'emails-v1', _id: email.id } },
-      {
-        userId: email.userId,
-        id: email.id,
-        emailId: email.id,
-        recipient: email.recipient,
-        subject: email.subject,
-        body: email.body,
-        status: email.status,
-        scheduledAt: email.scheduledAt,
-        sentAt: email.sentAt,
-      },
-    ]);
-    const result = await elastic.bulk({ operations, refresh: false });
-    if (result.errors)
-      throw new Error(`Elasticsearch rejected part of batch beginning at ${rows[0]?.id}`);
-    processed += rows.length;
+    const result = await indexEmails(rows);
+    indexed += result.indexed;
+    stale += result.stale;
     cursor = rows.at(-1)?.id;
     if (rows.length < 500) break;
   }
-  console.info(`Indexed ${processed} email records.`);
+  logger.info({ event: 'search.reindexed', indexed, alreadyCurrent: stale });
 }
-void reindex()
-  .then(() => process.exit(0))
-  .catch(async (error) => {
-    console.error(error);
-    await prisma.$disconnect();
-    process.exit(1);
+
+reindex()
+  .then(() => 0)
+  .catch((error) => {
+    logger.error({ event: 'search.reindex_failed', err: error });
+    return 1;
+  })
+  .then(async (code) => {
+    await Promise.allSettled([prisma.$disconnect(), elastic.close()]);
+    process.exit(code);
   });

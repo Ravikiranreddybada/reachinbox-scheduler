@@ -9,10 +9,15 @@
     "db:generate": "pnpm --filter @reachinbox/api prisma:generate",
     "db:migrate": "pnpm --filter @reachinbox/api prisma:migrate",
     "worker": "pnpm --filter @reachinbox/api worker",
-    "test": "vitest run",
+    "test": "vitest run --project unit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "verify": "pnpm format:check && pnpm test && pnpm build"
+    "verify": "pnpm format:check && pnpm test && pnpm typecheck && pnpm build",
+    "test:integration": "vitest run --project integration",
+    "test:all": "vitest run",
+    "typecheck": "pnpm --filter @reachinbox/api typecheck",
+    "loadtest": "pnpm --filter @reachinbox/api loadtest",
+    "ethereal:account": "pnpm --filter @reachinbox/api ethereal:account"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

@@ -38,3 +38,22 @@ describe('buildSchedulePlan', () => {
     expect(changed.payloadHash).not.toBe(original.payloadHash);
   });
 });
+
+describe('buildSchedulePlan per-recipient keys', () => {
+  it('derives a stable, distinct idempotency key per recipient', () => {
+    const plan = buildSchedulePlan(input);
+    const again = buildSchedulePlan(input);
+    expect(plan.emails.map((e) => e.idempotencyKey)).toEqual(
+      again.emails.map((e) => e.idempotencyKey),
+    );
+    expect(new Set(plan.emails.map((e) => e.idempotencyKey)).size).toBe(plan.emails.length);
+  });
+
+  it('treats recipient order as meaningful for pacing but not for the dedupe set', () => {
+    const reordered = buildSchedulePlan({
+      ...input,
+      recipients: ['bob@example.com', 'alice@example.com'],
+    });
+    expect(reordered.emails[0]!.recipient).toBe('bob@example.com');
+  });
+});

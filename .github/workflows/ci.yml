@@ -8,8 +8,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  static:
+    name: format, unit tests, types, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -19,11 +24,45 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+        with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @reachinbox/api exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm db:generate
+      - run: pnpm --filter @reachinbox/api exec prisma validate --schema prisma/schema.prisma
       - run: pnpm verify
       - run: pnpm audit --prod
-      - run: pnpm --filter @reachinbox/api exec prisma validate --schema prisma/schema.prisma
+
+  integration:
+    name: integration (PostgreSQL + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: reachinbox, POSTGRES_PASSWORD: reachinbox, POSTGRES_DB: reachinbox }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U reachinbox" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://reachinbox:reachinbox@localhost:5432/reachinbox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm test:integration
+
+  docker:
+    name: container images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/api/Dockerfile -t reachinbox-api .
+      - run: docker build -f apps/web/Dockerfile -t reachinbox-web .

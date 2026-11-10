@@ -1,57 +1,85 @@
 import { env } from '../config/env.js';
 import { jobStateNeedsRestoration } from '../domain/jobState.js';
 import { prisma } from '../lib/infra.js';
-import { emailQueue } from '../queues/emailQueue.js';
+import { withLeaderLock } from '../lib/leaderLock.js';
+import { logger } from '../lib/logger.js';
+import { increment } from '../observability/metrics.js';
+import { deliveryDelay, emailQueue } from '../queues/emailQueue.js';
 
 export interface RecoverySummary {
   staleProcessing: number;
   restoredJobs: number;
+  scanned: number;
 }
 
+const PAGE = 500;
+const STATE_BATCH = 50;
+
+/**
+ * Reconciles BullMQ with PostgreSQL, which is the source of truth:
+ *
+ *  - PROCESSING rows with an expired lease go back to SCHEDULED;
+ *  - every SCHEDULED row must have a live job (waiting, delayed, active);
+ *    a missing or terminal job is recreated with the email ID as job ID.
+ *
+ * Runs at startup and periodically, never as a cron job, and only on one
+ * process at a time thanks to the leader lock.
+ */
 export async function reconcileDeliveryQueue(now = new Date()): Promise<RecoverySummary> {
   const leaseCutoff = new Date(now.getTime() - env.PROCESSING_LEASE_MS);
   const stale = await prisma.email.updateMany({
-    where: {
-      status: 'PROCESSING',
-      processingStartedAt: { lt: leaseCutoff },
-    },
+    where: { status: 'PROCESSING', processingStartedAt: { lt: leaseCutoff } },
     data: {
       status: 'SCHEDULED',
       processingStartedAt: null,
       errorMessage: 'Recovered after an expired processing lease.',
     },
   });
+  if (stale.count) increment('lease_reclaims_total', stale.count);
 
   let cursor: string | undefined;
   let restoredJobs = 0;
+  let scanned = 0;
   for (;;) {
     const rows = await prisma.email.findMany({
       where: { status: 'SCHEDULED' },
       select: { id: true, scheduledAt: true },
       orderBy: { id: 'asc' },
-      take: 500,
+      take: PAGE,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
     if (!rows.length) break;
+    scanned += rows.length;
 
-    for (const row of rows) {
-      const existing = await emailQueue.getJob(row.id);
-      const state = existing ? await existing.getState() : 'missing';
-      if (existing && jobStateNeedsRestoration(state)) {
-        await existing.remove();
-      }
-      if (!existing || jobStateNeedsRestoration(state)) {
+    for (let i = 0; i < rows.length; i += STATE_BATCH) {
+      const batch = rows.slice(i, i + STATE_BATCH);
+      const states = await Promise.all(batch.map((row) => emailQueue.getJobState(row.id)));
+      for (const [index, row] of batch.entries()) {
+        const state = states[index]!;
+        if (!jobStateNeedsRestoration(state)) continue;
+        if (state !== 'unknown') await emailQueue.remove(row.id).catch(() => 0);
         await emailQueue.add(
           'deliver',
           { emailId: row.id },
-          { jobId: row.id, delay: Math.max(0, row.scheduledAt.getTime() - now.getTime()) },
+          { jobId: row.id, delay: deliveryDelay(row.scheduledAt, now.getTime()) },
         );
         restoredJobs += 1;
       }
     }
     cursor = rows.at(-1)?.id;
-    if (rows.length < 500) break;
+    if (rows.length < PAGE) break;
   }
+  if (restoredJobs) increment('jobs_restored_total', restoredJobs);
+  return { staleProcessing: stale.count, restoredJobs, scanned };
+}
 
-  return { staleProcessing: stale.count, restoredJobs };
+/** Fleet-safe wrapper: replicas that lose the lock skip this round. */
+export async function reconcileOnce(): Promise<RecoverySummary | null> {
+  const outcome = await withLeaderLock('reconcile', 10 * 60_000, () => reconcileDeliveryQueue());
+  if (!outcome.ran) {
+    logger.debug({ event: 'recovery.skipped', reason: 'another process holds the lock' });
+    return null;
+  }
+  logger.info({ event: 'recovery.completed', ...outcome.result });
+  return outcome.result;
 }

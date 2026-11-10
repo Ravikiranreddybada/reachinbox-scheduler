@@ -1,38 +1,52 @@
-import { worker, verifyDeliveryTransport } from './workers/emailWorker.js';
+import { env } from './config/env.js';
 import { elastic, prisma, redis } from './lib/infra.js';
-import { emailQueue } from './queues/emailQueue.js';
+import { installShutdown } from './lib/lifecycle.js';
+import { logger } from './lib/logger.js';
+import { emailQueue, searchSyncQueue } from './queues/emailQueue.js';
+import { reconcileOnce } from './services/recovery.js';
 import { ensureSearchIndex } from './services/search.js';
-import { reconcileDeliveryQueue } from './services/recovery.js';
-void Promise.all([
-  verifyDeliveryTransport(),
-  ensureSearchIndex()
+import {
+  createDeliveryWorker,
+  createSearchSyncWorker,
+  verifyDeliveryTransport,
+} from './workers/emailWorker.js';
+
+const delivery = createDeliveryWorker();
+const searchSync = createSearchSyncWorker();
+
+const shutdown = installShutdown([
+  // Worker.close() waits for in-flight jobs, so no send is cut off mid-way.
+  { name: 'delivery-worker', close: () => delivery.close() },
+  { name: 'search-worker', close: () => searchSync.close() },
+  { name: 'queues', close: () => Promise.all([emailQueue.close(), searchSyncQueue.close()]) },
+  { name: 'postgres', close: () => prisma.$disconnect() },
+  { name: 'redis', close: () => redis.quit() },
+  { name: 'elasticsearch', close: () => elastic.close() },
+]);
+
+async function start() {
+  // Fail fast on bad SMTP credentials instead of burning retries on every job.
+  await verifyDeliveryTransport();
+  const searchReady = await ensureSearchIndex()
     .then(() => true)
     .catch((error) => {
-      console.warn({ event: 'search.startup_degraded', error });
+      logger.warn({ event: 'search.startup_degraded', err: error });
       return false;
-    }),
-  reconcileDeliveryQueue(),
-])
-  .then(async ([, searchReady, recovery]) => {
-    void worker.run();
-    console.info({ event: 'worker.started', searchReady, recovery });
-  })
-  .catch(async (error) => {
-    console.error({ event: 'worker.startup_failed', code: error?.code, message: error?.message });
-    await worker.close();
-    await emailQueue.close();
-    await prisma.$disconnect();
-    await redis.quit();
-    await elastic.close();
-    process.exitCode = 1;
+    });
+  const recovery = await reconcileOnce();
+  void delivery.run();
+  void searchSync.run();
+  logger.info({
+    event: 'worker.started',
+    concurrency: env.WORKER_CONCURRENCY,
+    transport: env.DELIVERY_TRANSPORT,
+    minSendIntervalMs: env.MIN_SEND_INTERVAL_MS,
+    searchReady,
+    recovery,
   });
-async function shutdown() {
-  await worker.close();
-  await emailQueue.close();
-  await prisma.$disconnect();
-  await redis.quit();
-  await elastic.close();
-  process.exit(0);
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+
+start().catch((error) => {
+  logger.fatal({ event: 'worker.startup_failed', err: error });
+  void shutdown('startup_failed', 1);
+});
