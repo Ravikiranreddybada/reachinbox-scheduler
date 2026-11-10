@@ -1,4 +1,4 @@
-import { DelayedError, type Job, Worker } from 'bullmq';
+import { DelayedError, type Job, UnrecoverableError, Worker } from 'bullmq';
 import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 import { ABANDONED_MESSAGE, claimEmail, isTerminal } from '../domain/delivery.js';
@@ -20,8 +20,12 @@ import {
   reserveSendSlot,
   withJitter,
 } from '../services/deliveryGate.js';
+import { attachmentsForCampaign } from '../services/attachmentCache.js';
 import { notifyQuotaReached } from '../services/notifications.js';
 import { syncEmailsById } from '../services/search.js';
+import { suppressionMessage, suppressRecipient } from '../services/suppressions.js';
+import { transportFor, verifyDefaultTransport } from '../services/transports.js';
+import { unsubscribeUrl } from '../lib/unsubscribe.js';
 
 /**
  * A reserved slot may start this early to absorb timer jitter. It stays well
@@ -30,33 +34,15 @@ import { syncEmailsById } from '../services/search.js';
 const SLOT_TOLERANCE_MS = Math.min(20, Math.floor(env.MIN_SEND_INTERVAL_MS / 4));
 const RECEIPT_TTL_SECONDS = 7 * 24 * 3600;
 
-const transport =
-  env.DELIVERY_TRANSPORT === 'stream'
-    ? nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' })
-    : nodemailer.createTransport({
-        host: env.ETHEREAL_HOST,
-        port: env.ETHEREAL_PORT,
-        secure: env.ETHEREAL_PORT === 465,
-        auth:
-          env.ETHEREAL_USER && env.ETHEREAL_PASSWORD
-            ? { user: env.ETHEREAL_USER, pass: env.ETHEREAL_PASSWORD }
-            : undefined,
-        pool: true,
-        maxConnections: Math.min(env.WORKER_CONCURRENCY, 10),
-        connectionTimeout: 10_000,
-        greetingTimeout: 10_000,
-        socketTimeout: 30_000,
-      });
+export const verifyDeliveryTransport = verifyDefaultTransport;
 
-export async function verifyDeliveryTransport(): Promise<void> {
-  if (env.DELIVERY_TRANSPORT === 'stream') return;
-  if (!env.ETHEREAL_USER || !env.ETHEREAL_PASSWORD) {
-    throw new Error(
-      'Ethereal SMTP credentials are missing. Configure ETHEREAL_USER and ETHEREAL_PASSWORD.',
-    );
-  }
-  await transport.verify();
+/** A permanent SMTP failure (5xx) will never succeed on retry. */
+function smtpResponseCode(error: unknown): number {
+  const code = (error as { responseCode?: unknown } | null)?.responseCode;
+  return typeof code === 'number' ? code : 0;
 }
+/** Codes that mean "this recipient address is bad": the address is suppressed (a hard bounce). */
+const BOUNCE_CODES = new Set([550, 551, 553, 554]);
 
 function syncSearch(emailId: string): void {
   enqueueSearchSync([emailId]).catch((error) =>
@@ -122,15 +108,41 @@ export async function processDelivery(
 ): Promise<void> {
   const email = await prisma.email.findUnique({
     where: { id: job.data.emailId },
-    include: { sender: true, campaign: { select: { hourlyLimit: true } } },
+    include: { sender: true, campaign: { select: { hourlyLimit: true, body: true } } },
   });
   if (!email || isTerminal(email.status)) return;
+  const body = email.body ?? email.campaign.body ?? '';
 
   // 1. A receipt means SMTP already accepted this email: finish bookkeeping only.
   const receipt = await redis.get(keys.deliveryReceipt(email.id));
   if (receipt) {
     increment('duplicate_sends_prevented_total');
     return finalizeSent(email, receipt, false, true);
+  }
+
+  // 1b. Suppressed recipients (unsubscribed, bounced, complained) are never emailed.
+  const suppressed = await prisma.suppression.findUnique({
+    where: { userId_email: { userId: email.userId, email: email.recipient } },
+    select: { reason: true },
+  });
+  if (suppressed) {
+    const skipped = await prisma.email.updateMany({
+      where: { id: email.id, status: 'SCHEDULED' },
+      data: { status: 'CANCELLED', errorMessage: suppressionMessage(suppressed.reason) },
+    });
+    if (skipped.count) {
+      increment('emails_suppressed_total');
+      publishEvent(email.userId, {
+        type: 'email.status',
+        emailId: email.id,
+        campaignId: email.campaignId,
+        status: 'CANCELLED',
+        at: new Date().toISOString(),
+      });
+      syncSearch(email.id);
+      logger.info({ event: 'email.suppressed', emailId: email.id, reason: suppressed.reason });
+    }
+    return;
   }
 
   // 2. Admission: pacing and hourly quotas, reserved once per send.
@@ -200,29 +212,32 @@ export async function processDelivery(
   // 4. Side effect.
   let info: { messageId: string };
   try {
-    const attachments = await prisma.attachment.findMany({
-      where: { campaignId: email.campaignId },
-      select: { filename: true, contentType: true, data: true },
-    });
-    info = await transport.sendMail({
+    const attachments = await attachmentsForCampaign(email.campaignId);
+    const unsubscribe = unsubscribeUrl(email.id);
+    const safeBody = sanitizeEmailHtml(body);
+    info = await transportFor(email.sender).sendMail({
       from: {
         name: email.sender.displayName || env.ETHEREAL_FROM_NAME,
         address: email.sender.email,
       },
       to: email.recipient,
       subject: email.subject,
-      html: sanitizeEmailHtml(email.body),
-      text: htmlToText(email.body),
-      attachments: attachments.map((file) => ({
-        filename: file.filename,
-        contentType: file.contentType,
-        content: Buffer.from(file.data),
-      })),
+      html: `${safeBody}<p style="font-size:12px;color:#6b7280"><a href="${unsubscribe}">Unsubscribe</a></p>`,
+      text: `${htmlToText(body)}\n\nUnsubscribe: ${unsubscribe}`,
+      attachments,
       messageId: `<${email.id}@reachinbox.local>`,
-      headers: { 'X-ReachInbox-Email-Id': email.id, 'X-ReachInbox-Campaign-Id': email.campaignId },
+      headers: {
+        'X-ReachInbox-Email-Id': email.id,
+        'X-ReachInbox-Campaign-Id': email.campaignId,
+        'List-Unsubscribe': `<${unsubscribe}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
     });
   } catch (error) {
-    const finalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+    const code = smtpResponseCode(error);
+    // 5xx is permanent: retrying cannot help, so fail now instead of burning attempts.
+    const permanent = code >= 500 && code < 600;
+    const finalAttempt = permanent || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
     const status = finalAttempt ? 'FAILED' : 'SCHEDULED';
     const message = error instanceof Error ? error.message.slice(0, 500) : 'Unknown delivery error';
     // A retry must pass through admission again: the failed attempt used its slot.
@@ -243,12 +258,19 @@ export async function processDelivery(
       at: new Date().toISOString(),
     });
     syncSearch(email.id);
+    if (permanent && BOUNCE_CODES.has(code)) {
+      // Hard bounce: never mail this address again. Cancels its other pending emails.
+      await suppressRecipient(email.userId, email.recipient, 'BOUNCE', message).catch((cause) =>
+        logger.warn({ event: 'suppression.bounce_failed', emailId: email.id, err: cause }),
+      );
+      increment('emails_bounced_total');
+    }
     logger.warn({
       event: finalAttempt ? 'email.failed' : 'email.retry',
       emailId: email.id,
       err: error,
     });
-    throw error;
+    throw permanent ? new UnrecoverableError(message) : error;
   }
 
   // 5. Bookkeeping. Receipt first, then PostgreSQL; see finalizeSent.

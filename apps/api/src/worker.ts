@@ -4,8 +4,9 @@ import { installShutdown } from './lib/lifecycle.js';
 import { logger } from './lib/logger.js';
 import { emailQueue, searchSyncQueue } from './queues/emailQueue.js';
 import { ensureQuotaState } from './services/quotaRecovery.js';
-import { reconcileOnce } from './services/recovery.js';
+import { reconcileOnce, startReconcileLoop } from './services/recovery.js';
 import { ensureSearchIndex } from './services/search.js';
+import { closeTransports } from './services/transports.js';
 import {
   createDeliveryWorker,
   createSearchSyncWorker,
@@ -15,11 +16,15 @@ import {
 const delivery = createDeliveryWorker();
 const searchSync = createSearchSyncWorker();
 
+const stopReconcileLoop = startReconcileLoop();
+
 const shutdown = installShutdown([
+  { name: 'reconcile-loop', close: async () => stopReconcileLoop() },
   // Worker.close() waits for in-flight jobs, so no send is cut off mid-way.
   { name: 'delivery-worker', close: () => delivery.close() },
   { name: 'search-worker', close: () => searchSync.close() },
   { name: 'queues', close: () => Promise.all([emailQueue.close(), searchSyncQueue.close()]) },
+  { name: 'smtp', close: async () => closeTransports() },
   { name: 'postgres', close: () => prisma.$disconnect() },
   { name: 'redis', close: () => redis.quit() },
   { name: 'elasticsearch', close: () => elastic.close() },

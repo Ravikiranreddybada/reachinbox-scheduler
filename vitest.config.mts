@@ -40,6 +40,9 @@ export default defineConfig({
             DATABASE_URL: process.env.INTEGRATION_DATABASE_URL,
             REDIS_URL: process.env.TEST_REDIS_URL ?? 'redis://localhost:6379/15',
             SESSION_SECRET: 'integration-test-secret-with-32-plus-chars',
+            // Fixed throwaway key (32 bytes, base64) for tests only.
+            DATA_ENCRYPTION_KEY: 'dGVzdC1vbmx5LWtleS0zMi1ieXRlcy1sb25nLTEyMzQ=',
+            ENQUEUE_HORIZON_MS: '3600000',
             DELIVERY_TRANSPORT: 'stream',
             MIN_SEND_INTERVAL_MS: '1000',
             MAX_EMAILS_PER_HOUR_PER_SENDER: '10',

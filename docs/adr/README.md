@@ -8,5 +8,8 @@ Short records. Each has Context, Decision, Consequences. Accepted records are no
 | 0002 | [Reserve send slots instead of polling rate limits](0002-reserve-send-slots.md)      | accepted |
 | 0003 | [At-least-once delivery with receipts](0003-at-least-once-delivery-with-receipts.md) | accepted |
 | 0004 | [Search is a versioned projection](0004-search-is-a-versioned-projection.md)         | accepted |
+| 0005 | [Redis holds only the near future](0005-bounded-queue-horizon.md)                    | accepted |
+| 0006 | [Suppression list, unsubscribe and hard bounces](0006-suppression-and-bounces.md)    | accepted |
+| 0007 | [Search outbox](0007-search-outbox.md)                                               | accepted |
 
 Full context: [../architecture/overview.md](../architecture/overview.md).

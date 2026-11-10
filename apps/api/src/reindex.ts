@@ -1,6 +1,6 @@
 import { elastic, prisma } from './lib/infra.js';
 import { logger } from './lib/logger.js';
-import { ensureSearchIndex, indexEmails } from './services/search.js';
+import { ensureSearchIndex, indexEmails, withCampaignBody } from './services/search.js';
 
 /** Rebuilds the search projection from PostgreSQL, the source of truth. */
 async function reindex() {
@@ -11,6 +11,7 @@ async function reindex() {
   for (;;) {
     const rows = await prisma.email.findMany({
       take: 500,
+      include: withCampaignBody,
       orderBy: { id: 'asc' },
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });

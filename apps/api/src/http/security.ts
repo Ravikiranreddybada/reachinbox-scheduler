@@ -10,6 +10,9 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 export function verifyRequestOrigin(req: Request, res: Response, next: NextFunction) {
   if (!UNSAFE.has(req.method)) return next();
+  // Unsubscribe links are posted by mail clients from any origin. They carry a
+  // signed token and no cookie, so there is nothing for CSRF to ride on.
+  if (req.path.startsWith('/unsubscribe/')) return next();
   const origin = req.get('origin');
   if (origin && origin !== env.WEB_ORIGIN) {
     return res.status(403).json({ error: 'Request origin is not allowed.' });

@@ -181,16 +181,16 @@ a {
 }
 .login-card {
   width: 100%;
-  max-width: 580px;
+  max-width: 460px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 64px 67px 59px;
+  padding: 44px 48px 40px;
   background: #fff;
 }
 .login-card h1 {
-  margin: 0 0 32px;
+  margin: 0 0 24px;
   text-align: center;
-  font-size: 42px;
+  font-size: 32px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -200,10 +200,10 @@ a {
   justify-content: center;
   gap: 12px;
   width: 100%;
-  height: 56px;
+  height: 48px;
   border-radius: 12px;
   background: var(--green-tint);
-  font-size: 18px;
+  font-size: 16px;
   transition: background 0.15s;
 }
 .google-btn:hover {
@@ -213,9 +213,9 @@ a {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin: 24px 0 24px;
+  margin: 18px 0 18px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 13px;
   letter-spacing: 0.02em;
 }
 .divider::before,
@@ -228,14 +228,14 @@ a {
 .field-input {
   display: block;
   width: 100%;
-  height: 65px;
-  padding: 0 23px;
+  height: 52px;
+  padding: 0 18px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--field);
-  font-size: 17px;
+  font-size: 15px;
   outline: none;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .field-input::placeholder {
   color: #6b706c;
@@ -246,9 +246,9 @@ a {
 }
 .login-card .btn--solid {
   width: 100%;
-  height: 56px;
-  margin-top: 18px;
-  font-size: 18px;
+  height: 48px;
+  margin-top: 14px;
+  font-size: 16px;
 }
 .form-error {
   margin: 0 0 14px;

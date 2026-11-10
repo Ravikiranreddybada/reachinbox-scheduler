@@ -14,6 +14,8 @@ export type Counter =
   | 'quota_rebuilds_total'
   | 'emails_retried_total'
   | 'emails_cancelled_total'
+  | 'emails_suppressed_total'
+  | 'emails_bounced_total'
   | 'quota_deferrals_total'
   | 'pace_deferrals_total'
   | 'duplicate_sends_prevented_total'

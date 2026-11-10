@@ -14,7 +14,8 @@
     "start:worker": "node dist/worker.js",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "loadtest": "tsx scripts/loadtest.ts",
-    "ethereal:account": "tsx scripts/ethereal-account.ts"
+    "ethereal:account": "tsx scripts/ethereal-account.ts",
+    "rotate-secrets": "tsx scripts/rotate-secrets.ts"
   },
   "dependencies": {
     "@bull-board/api": "^6.5.4",

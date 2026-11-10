@@ -7,9 +7,12 @@ const mocks = vi.hoisted(() => ({
   getJobState: vi.fn(),
   remove: vi.fn(),
   add: vi.fn(),
+  drain: vi.fn(),
 }));
 
-vi.mock('../config/env.js', () => ({ env: { PROCESSING_LEASE_MS: 300_000 } }));
+vi.mock('../config/env.js', () => ({
+  env: { PROCESSING_LEASE_MS: 300_000, RECONCILE_INTERVAL_MS: 300_000 },
+}));
 vi.mock('../lib/infra.js', () => ({
   prisma: { email: { updateMany: mocks.updateMany, findMany: mocks.findMany } },
 }));
@@ -20,6 +23,8 @@ vi.mock('../observability/metrics.js', () => ({ increment: vi.fn() }));
 vi.mock('../queues/emailQueue.js', () => ({
   emailQueue: { getJobState: mocks.getJobState, remove: mocks.remove, add: mocks.add },
   deliveryDelay: (at: Date, now: number) => Math.max(0, at.getTime() - now),
+  queueHorizon: (now: number) => new Date(now + 6 * 3_600_000),
+  drainSearchOutbox: mocks.drain,
 }));
 
 import { reconcileDeliveryQueue } from './recovery.js';
@@ -47,6 +52,7 @@ describe('reconcileDeliveryQueue', () => {
       { id: 'email-1', scheduledAt: new Date('2026-11-09T10:05:00.000Z') },
     ]);
     mocks.remove.mockResolvedValue(1);
+    mocks.drain.mockResolvedValue(0);
   });
 
   it('replaces a terminal job that would otherwise strand scheduled work', async () => {
@@ -59,7 +65,12 @@ describe('reconcileDeliveryQueue', () => {
       { emailId: 'email-1' },
       { jobId: 'email-1', delay: 300_000 },
     );
-    expect(result).toEqual({ staleProcessing: 1, restoredJobs: 1, scanned: 1 });
+    expect(result).toEqual({
+      staleProcessing: 1,
+      restoredJobs: 1,
+      scanned: 1,
+      searchOutboxDrained: 0,
+    });
   });
 
   it('recreates a missing job without trying to remove it', async () => {
@@ -87,5 +98,22 @@ describe('reconcileDeliveryQueue', () => {
         },
       }),
     );
+  });
+
+  it('only reads rows due inside the queue horizon, never the whole table', async () => {
+    mocks.getJobState.mockResolvedValue('delayed');
+    await reconcileDeliveryQueue(now);
+    expect(mocks.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: 'SCHEDULED', scheduledAt: { lte: new Date('2026-11-09T16:00:00.000Z') } },
+      }),
+    );
+  });
+
+  it('publishes search work that was parked in the outbox', async () => {
+    mocks.getJobState.mockResolvedValue('delayed');
+    mocks.drain.mockResolvedValue(7);
+    const result = await reconcileDeliveryQueue(now);
+    expect(result.searchOutboxDrained).toBe(7);
   });
 });

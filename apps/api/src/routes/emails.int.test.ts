@@ -6,6 +6,7 @@ import { createApp } from '../app.js';
 import { issueSession } from '../lib/auth.js';
 import { prisma, redis } from '../lib/infra.js';
 import { emailQueue, searchSyncQueue } from '../queues/emailQueue.js';
+import { reconcileDeliveryQueue } from '../services/recovery.js';
 
 let server: Server;
 let base: string;
@@ -82,6 +83,43 @@ describe('POST /api/emails (real HTTP, PostgreSQL, Redis)', () => {
     const rows = await prisma.email.findMany({ where: { campaignId: created.campaignId } });
     expect(rows.every((row) => row.status === 'CANCELLED')).toBe(true);
     for (const row of rows) expect(await emailQueue.getJob(row.id)).toBeUndefined();
+  });
+
+  it('keeps far-future emails out of Redis until they come into range', async () => {
+    const week = 7 * 24 * 3_600_000;
+    const created = await (
+      await post(
+        payload({
+          idempotencyKey: 'idem-key-horizon',
+          scheduledAt: new Date(Date.now() + week).toISOString(),
+        }),
+      )
+    ).json();
+    const rows = await prisma.email.findMany({ where: { campaignId: created.campaignId } });
+    expect(rows).toHaveLength(2);
+    // Stored in PostgreSQL, with the body once on the campaign, not on each row.
+    expect(rows.every((row) => row.status === 'SCHEDULED' && row.body === null)).toBe(true);
+    expect(
+      (await prisma.campaign.findUniqueOrThrow({ where: { id: created.campaignId } })).body,
+    ).toBe('Hello');
+    for (const row of rows) expect(await emailQueue.getJob(row.id)).toBeUndefined();
+
+    // A week later the reconciler sees them inside the horizon and queues them.
+    await reconcileDeliveryQueue(new Date(Date.now() + week - 3_000_000));
+    for (const row of rows) expect(await emailQueue.getJob(row.id)).toBeDefined();
+  });
+
+  it('lists with a preview and returns the full body on the detail route', async () => {
+    const created = await (await post(payload({ idempotencyKey: 'idem-key-preview' }))).json();
+    const list = await (
+      await fetch(`${base}/api/emails?campaignId=${created.campaignId}`, { headers: { cookie } })
+    ).json();
+    expect(list.items[0]).toMatchObject({ preview: 'Hello' });
+    expect(list.items[0]).not.toHaveProperty('campaign');
+    const detail = await (
+      await fetch(`${base}/api/emails/${list.items[0].id}`, { headers: { cookie } })
+    ).json();
+    expect(detail.body).toBe('Hello');
   });
 
   it('keeps tenants apart', async () => {

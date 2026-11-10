@@ -5569,7 +5569,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>&bull; PostgreSQL owns business state; Redis owns execution state</li>
-          <li>&bull; Stable job IDs and startup reconciliation recover missing queue work</li>
+          <li>&bull; Stable job IDs and a reconciler (API and worker, leader-locked) recover missing queue work</li>
+          <li>&bull; Redis holds only emails due within the queue horizon; later ones wait in PostgreSQL</li>
+          <li>&bull; Search outbox in PostgreSQL: index work survives a Redis outage</li>
         </ul>
       </div>
 
@@ -5579,8 +5581,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <h3>Delivery semantics</h3>
         </div>
         <ul>
-          <li>&bull; At-least-once processing with idempotent scheduling</li>
+          <li>&bull; At-most-once after claim: a crash mid-send marks FAILED, never resends</li>
           <li>&bull; SMTP acknowledgement crash windows are documented explicitly</li>
+          <li>&bull; Suppression list, unsubscribe link and hard-bounce handling stop bad sends; sender-level SMTP logins</li>
         </ul>
       </div>
 
@@ -5591,7 +5594,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>&bull; Stateless API and horizontally scalable workers</li>
-          <li>&bull; Redis Lua counters coordinate limits across worker replicas</li>
+          <li>&bull; Redis Lua sliding-window quotas (sender, campaign, tenant, global) coordinate limits across worker replicas</li>
+          <li>&bull; Body stored once per campaign; attachments cached per worker; live events replay after a reconnect</li>
         </ul>
       </div>
     </div>

@@ -17,7 +17,9 @@
     "test:all": "vitest run",
     "typecheck": "pnpm --filter @reachinbox/api typecheck",
     "loadtest": "pnpm --filter @reachinbox/api loadtest",
-    "ethereal:account": "pnpm --filter @reachinbox/api ethereal:account"
+    "ethereal:account": "pnpm --filter @reachinbox/api ethereal:account",
+    "reindex": "pnpm --filter @reachinbox/api reindex",
+    "rotate-secrets": "pnpm --filter @reachinbox/api rotate-secrets"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

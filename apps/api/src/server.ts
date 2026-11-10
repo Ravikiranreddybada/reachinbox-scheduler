@@ -5,7 +5,7 @@ import { elastic, prisma, redis } from './lib/infra.js';
 import { installShutdown } from './lib/lifecycle.js';
 import { logger } from './lib/logger.js';
 import { emailQueue, searchSyncQueue } from './queues/emailQueue.js';
-import { reconcileOnce } from './services/recovery.js';
+import { reconcileOnce, startReconcileLoop } from './services/recovery.js';
 import { ensureSearchIndex } from './services/search.js';
 
 const app = createApp();
@@ -29,16 +29,13 @@ const server = app.listen(env.API_PORT, () => {
 server.keepAliveTimeout = 65_000;
 server.headersTimeout = 66_000;
 
-const recoveryTimer = setInterval(() => {
-  void reconcileOnce().catch((error) => logger.error({ event: 'recovery.failed', err: error }));
-}, env.RECONCILE_INTERVAL_MS);
-recoveryTimer.unref();
+const stopReconcileLoop = startReconcileLoop();
 
 installShutdown([
   {
     name: 'http',
     close: async () => {
-      clearInterval(recoveryTimer);
+      stopReconcileLoop();
       await closeEventStreams();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

@@ -55,6 +55,29 @@ API commit ─► job delayed until scheduledAt
                  └─ SMTP error ─► SCHEDULED + BullMQ backoff, or FAILED after 5 attempts
 ```
 
+### How scheduling works
+
+1. `POST /api/emails` stores the campaign and every recipient in PostgreSQL in one transaction.
+2. For each email due within `ENQUEUE_HORIZON_MS` (default 6 h) the API adds a BullMQ **delayed job** (`delay = scheduledAt - now`, `jobId = emailId`). Emails further out stay in PostgreSQL only; the reconciler queues them as they come into range. So Redis memory depends on the horizon, not on how far ahead people schedule. No cron, no polling loop for sends.
+3. When the delay ends, a worker picks the job, sends through Ethereal SMTP, and marks the row `SENT` (or `FAILED` after 5 tries).
+4. Sender, start time, per-email delay and hourly limit come from the compose form.
+
+### How persistence on restart is handled
+
+- PostgreSQL is the source of truth. Redis runs with AOF, so delayed jobs survive a Redis restart.
+- Stopping the API or the worker loses nothing: jobs wait in Redis until a worker returns.
+- If Redis loses jobs, the leader-elected reconciler rebuilds them from PostgreSQL (a `setInterval` with a Redis lock, not a cron lib). It reads only rows due inside the horizon (indexed on `status, scheduledAt`), so its cost does not grow with the whole backlog. The loop runs in both the API and the worker, so recovery continues if only one of them is up.
+- Duplicates are blocked three ways: job ID = email ID, a compare-and-set claim in PostgreSQL, and a Redis delivery receipt written right after SMTP accepts.
+- Restart proof: `kill -9` of API and worker with future emails pending; they still sent on time, once.
+
+### How rate limiting and concurrency are implemented
+
+- **Concurrency:** `WORKER_CONCURRENCY` jobs run in parallel per worker process. Many worker processes are allowed. A row claim has one winner, so parallel jobs are safe.
+- **Delay between sends:** `MIN_SEND_INTERVAL_MS` (default 2000) per sender, enforced in Redis across all workers.
+- **Hourly limits:** `MAX_EMAILS_PER_HOUR_PER_SENDER` (plus tenant and global caps) are sliding-window counters in Redis, changed by one Lua script. Not in memory.
+- **Over the limit:** the job is not dropped or failed. It is delayed until the oldest counted send leaves the hour window, so order is kept as much as possible. The first hit per hour sends a Slack message (if Slack is connected; if not, nothing happens and nothing crashes).
+- **1000+ emails at once:** all jobs are accepted and queued. Pacing and caps spread them over time.
+
 Read more: [documentation index](docs/README.md), [architecture and failure matrix](docs/architecture/overview.md), [decision records](docs/adr/), [OpenAPI contract](docs/api/openapi.yaml), [demo script](docs/guides/demo-script.md), [assignment checklist](docs/project/assignment-brief.md).
 
 ## Measured
@@ -71,7 +94,7 @@ Throughput scales with the number of senders, because spacing is per sender, not
 
 ## Features done
 
-**Backend**
+**Backend** (scheduler, persistence, rate limiting, concurrency)
 
 - Schedule API with idempotency; campaign and emails stored in PostgreSQL in one transaction.
 - BullMQ delayed jobs on Redis (no cron); the reconciler rebuilds lost jobs after a restart.
@@ -80,8 +103,16 @@ Throughput scales with the number of senders, because spacing is per sender, not
 - Hourly caps per sender, per campaign and per tenant in Redis; overflow waits for the sliding window to free up, nothing is dropped.
 - Slack OAuth connect/disconnect and a live message when a limit is reached.
 - Elasticsearch search over scheduled and sent emails; Bull Board at `/admin/queues`.
+- Bounded Redis: only emails due within `ENQUEUE_HORIZON_MS` own a delayed job; later ones wait in PostgreSQL.
+- Message body stored once per campaign (not per recipient); lists read a stored preview, never the body.
+- Attachment bytes cached per worker (LRU, `ATTACHMENT_CACHE_BYTES`), so a campaign loads them once, not once per recipient.
+- Own SMTP login per sender (encrypted at rest), with the shared Ethereal account as fallback.
+- Unsubscribe link and `List-Unsubscribe` header in every email, a suppression list (unsubscribe, complaint, hard bounce), and a hard-bounce path (5xx fails at once, no retry, address suppressed).
+- Search outbox: if Redis is down when emails are scheduled, the index work waits in PostgreSQL and is published later.
+- Live events replay after a reconnect (`Last-Event-ID` and a capped Redis stream).
+- Encryption key is required, with rotation (`DATA_ENCRYPTION_KEY_PREVIOUS`, `pnpm rotate-secrets`); Elasticsearch runs with security on.
 
-**Frontend**
+**Frontend** (login, dashboard, compose, tables)
 
 - Google login, name, email and avatar in the header, logout.
 - Dashboard with Scheduled and Sent lists (loading, empty and error states, search, live updates).
@@ -99,16 +130,47 @@ Throughput scales with the number of senders, because spacing is per sender, not
 
 Requirements: Node.js 20+, pnpm 11 (pinned in `packageManager`; run `corepack enable` once), Docker.
 
+### 1. Set up Ethereal and env variables
+
+Ethereal is a fake SMTP inbox. No mail leaves your machine.
+
 ```bash
-cp .env.example .env              # then fill in credentials (see below)
-pnpm ethereal:account             # optional: prints fresh Ethereal SMTP credentials
+cp .env.example .env              # then edit .env
+pnpm ethereal:account             # creates a free Ethereal account, prints 4 lines
+```
+
+1. Copy the printed `ETHEREAL_HOST`, `ETHEREAL_PORT`, `ETHEREAL_USER`, `ETHEREAL_PASSWORD` into `.env`.
+2. Sent mail shows at <https://ethereal.email/messages> (log in with that user and password).
+3. Set `SESSION_SECRET` (≥ 32 characters, e.g. `openssl rand -base64 32`) and `DATA_ENCRYPTION_KEY` (required, `openssl rand -base64 32`). Elasticsearch runs with security on: keep `ELASTICSEARCH_USERNAME=elastic` and `ELASTICSEARCH_PASSWORD=reachinbox-dev` from `.env.example`.
+4. Add Google OAuth values: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Redirect URI: `http://localhost:4000/auth/google/callback`.
+5. Add Slack app values: `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`. Redirect URI: `http://localhost:4000/auth/slack/callback`.
+6. Tune limits if you want: `WORKER_CONCURRENCY`, `MIN_SEND_INTERVAL_MS`, `MAX_EMAILS_PER_HOUR_*`. Full list in [Configuration](#configuration).
+
+The worker checks the SMTP login at start. It refuses to start with wrong Ethereal values.
+
+Optional, more than one SMTP account: run `pnpm ethereal:account` again, then attach the login to a sender with `PUT /api/senders/:id/smtp` (`{"user":"…","password":"…"}`). Senders without a login use the account in `.env`.
+
+### 2. Run the backend (Express API, Redis, database, BullMQ worker)
+
+```bash
 docker compose up -d              # PostgreSQL, Redis (AOF), Elasticsearch
 pnpm install
 pnpm db:generate && pnpm db:migrate
-pnpm dev                          # API :4000 and dashboard :3000
-pnpm worker                       # in a second terminal; start more for more capacity
-# pnpm dev already starts the Next.js frontend. To run only the frontend: pnpm --filter @reachinbox/web dev
+pnpm --filter @reachinbox/api dev # Express API on :4000
+pnpm worker                       # BullMQ worker, in a second terminal
 ```
+
+Start more `pnpm worker` processes for more capacity. They share Redis and PostgreSQL, so no extra setup.
+
+### 3. Run the frontend (Next.js)
+
+```bash
+pnpm --filter @reachinbox/web dev # dashboard on :3000, talks to the API on :4000
+```
+
+Open <http://localhost:3000> and sign in with Google.
+
+Shortcut: `pnpm dev` starts the API and the frontend together. Run `pnpm worker` next to it.
 
 Full stack in containers, with three worker replicas:
 
@@ -116,25 +178,29 @@ Full stack in containers, with three worker replicas:
 docker compose --profile app up -d --build --scale worker=3
 ```
 
-Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000/health`, metrics `http://localhost:4000/metrics`, Bull Board `http://localhost:4000/admin/queues` (emails in `BULL_BOARD_ADMIN_EMAILS` only). Rebuild search from PostgreSQL with `pnpm --filter @reachinbox/api reindex`.
+Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000/health`, metrics `http://localhost:4000/metrics`, Bull Board `http://localhost:4000/admin/queues` (emails in `BULL_BOARD_ADMIN_EMAILS` only). Rebuild search from PostgreSQL with `pnpm reindex`.
 
 ## Configuration
 
-| Variable                                                                                         | Purpose                                                                                                    |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`                                                 | Infrastructure endpoints                                                                                   |
-| `SESSION_SECRET`                                                                                 | ≥ 32 characters; signs sessions and OAuth state (placeholder rejected in production)                       |
-| `DATA_ENCRYPTION_KEY`                                                                            | Optional base64 32-byte key for Slack secrets at rest; derived from `SESSION_SECRET` if unset              |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`                                | Google OAuth web client (callback `http://localhost:4000/auth/google/callback`)                            |
-| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`                                   | Slack app with the `incoming-webhook` scope                                                                |
-| `ETHEREAL_HOST`, `ETHEREAL_PORT`, `ETHEREAL_USER`, `ETHEREAL_PASSWORD`                           | SMTP; the worker verifies them at startup and refuses to start if they are wrong                           |
-| `DELIVERY_TRANSPORT`                                                                             | `smtp` (default) or `stream` (in-process stub for load tests)                                              |
-| `WORKER_CONCURRENCY`                                                                             | Jobs in flight per worker process (1–100)                                                                  |
-| `MIN_SEND_INTERVAL_MS`                                                                           | Minimum time between two sends **from the same sender**, across all workers (default 2000)                 |
-| `MAX_EMAILS_PER_HOUR_PER_SENDER`, `MAX_EMAILS_PER_HOUR_PER_TENANT`, `MAX_EMAILS_PER_HOUR_GLOBAL` | Sliding one-hour caps per sender, per tenant, and across all tenants; a campaign may add its own lower cap |
-| `PROCESSING_LEASE_MS`, `RECONCILE_INTERVAL_MS`                                                   | Lease after which a stuck send is reclaimed; reconciliation period                                         |
-| `BULL_BOARD_ADMIN_EMAILS`, `METRICS_TOKEN`                                                       | Operator access to Bull Board; bearer token for `/metrics`                                                 |
-| `WEB_ORIGIN`, `API_PORT`, `LOG_LEVEL`                                                            | Browser origin, port, log level                                                                            |
+| Variable                                                                                         | Purpose                                                                                                                       |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`                                                 | Infrastructure endpoints                                                                                                      |
+| `SESSION_SECRET`                                                                                 | ≥ 32 characters; signs sessions and OAuth state (placeholder rejected in production)                                          |
+| `DATA_ENCRYPTION_KEY`, `DATA_ENCRYPTION_KEY_PREVIOUS`                                            | **Required** base64 32-byte key for secrets at rest (no fallback). Retired keys go in `_PREVIOUS`, then `pnpm rotate-secrets` |
+| `ELASTICSEARCH_USERNAME`, `ELASTICSEARCH_PASSWORD`                                               | Elasticsearch login (docker-compose enables security; user `elastic`)                                                         |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`                                | Google OAuth web client (callback `http://localhost:4000/auth/google/callback`)                                               |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`                                   | Slack app with the `incoming-webhook` scope                                                                                   |
+| `ETHEREAL_HOST`, `ETHEREAL_PORT`, `ETHEREAL_USER`, `ETHEREAL_PASSWORD`                           | SMTP; the worker verifies them at startup and refuses to start if they are wrong                                              |
+| `DELIVERY_TRANSPORT`                                                                             | `smtp` (default) or `stream` (in-process stub for load tests)                                                                 |
+| `WORKER_CONCURRENCY`                                                                             | Jobs in flight per worker process (1–100)                                                                                     |
+| `MIN_SEND_INTERVAL_MS`                                                                           | Minimum time between two sends **from the same sender**, across all workers (default 2000)                                    |
+| `MAX_EMAILS_PER_HOUR_PER_SENDER`, `MAX_EMAILS_PER_HOUR_PER_TENANT`, `MAX_EMAILS_PER_HOUR_GLOBAL` | Sliding one-hour caps per sender, per tenant, and across all tenants; a campaign may add its own lower cap                    |
+| `PROCESSING_LEASE_MS`, `RECONCILE_INTERVAL_MS`                                                   | Lease after which a stuck send is reclaimed; reconciliation period                                                            |
+| `ENQUEUE_HORIZON_MS`                                                                             | Only emails due within this window own a BullMQ job (default 6 h; at least 2 × `RECONCILE_INTERVAL_MS`)                       |
+| `ATTACHMENT_CACHE_BYTES`                                                                         | Per-worker memory budget for cached attachment bytes (default 64 MB)                                                          |
+| `API_PUBLIC_URL`                                                                                 | Base URL placed in unsubscribe links                                                                                          |
+| `BULL_BOARD_ADMIN_EMAILS`, `METRICS_TOKEN`                                                       | Operator access to Bull Board; bearer token for `/metrics`                                                                    |
+| `WEB_ORIGIN`, `API_PORT`, `LOG_LEVEL`                                                            | Browser origin, port, log level                                                                                               |
 
 ## API
 
@@ -147,11 +213,13 @@ Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000
 | `POST /api/emails/:id/retry`                                            | Re-queue one failed email                                                     |
 | `PATCH /api/emails/:id`, `DELETE /api/emails/:id`                       | Star / archive; delete (cancels first if still scheduled)                     |
 | `POST /api/attachments`, `GET/DELETE /api/attachments/:id`              | Upload (raw body, ≤ 5 MB), download, remove an unsent attachment              |
-| `GET /api/senders`                                                      | Addresses the user has sent from (compose "From" picker)                      |
+| `GET /api/senders`, `PUT/DELETE /api/senders/:id/smtp`                  | Sender addresses; set or remove a sender's own SMTP login                     |
+| `GET/POST /api/suppressions`, `DELETE /api/suppressions/:id`            | Suppression list (unsubscribe, bounce, complaint). Complaint webhook hook     |
+| `GET/POST /unsubscribe/:token`                                          | Public one-click unsubscribe (GET shows a page, POST unsubscribes)            |
 | `GET /api/settings`                                                     | Effective pacing and hourly limits (drives the dashboard Delivery Guard)      |
 | `GET /api/campaigns`, `GET /api/campaigns/:id`                          | Campaigns with live progress by status                                        |
 | `POST /api/campaigns/:id/cancel`                                        | Cancel every unclaimed email of a campaign                                    |
-| `GET /api/events`                                                       | Server-Sent Events stream of status changes                                   |
+| `GET /api/events`                                                       | Server-Sent Events stream; replays missed events on `Last-Event-ID`           |
 | `GET /auth/google`, `POST /auth/login`, `/auth/me`, `POST /auth/logout` | Google OAuth, email + password (signs up an unknown address), profile, logout |
 | `GET /auth/slack`, `DELETE /auth/slack`                                 | Connect / disconnect Slack alerts                                             |
 | `GET /health`, `/health/live`, `/metrics`, `/admin/queues`              | Operations                                                                    |
@@ -173,6 +241,11 @@ The integration suite proves, against real PostgreSQL and Redis: exactly-cap adm
 - **Redis loss does not reset the caps.** If the quota marker is missing, the worker (at start) and the reconciler (every tick) rebuild the sets from emails sent in the last hour in PostgreSQL. Only slots reserved but not yet used are lost; those jobs re-reserve when they run.
 - **Three scopes plus a global cap.** `MAX_EMAILS_PER_HOUR_PER_TENANT` is per workspace; `MAX_EMAILS_PER_HOUR_GLOBAL` is one counter for all tenants. The global key is not in a tenant hash tag, so it assumes a single Redis node (the local demo).
 - **Pacing is per sender.** Reservations look ahead at most 15 minutes, so a cancelled campaign can delay the next campaign of the same sender by at most that much.
+- **Far-future emails are not in Redis yet.** Only emails due within the horizon have a BullMQ job. An email scheduled a week out is a PostgreSQL row until the reconciler (every `RECONCILE_INTERVAL_MS`) sees it inside the window. Cost: queueing lags by up to one reconcile tick, which the horizon (≥ 2 ticks) absorbs.
+- **Own SMTP logins are optional.** A sender without its own login shares the default Ethereal account. A sender with one sends through its own pooled connection. Ethereal is still a fake inbox, so this proves the wiring, not real provider limits.
+- **Unsubscribe, complaint and bounce handling is basic.** Unsubscribe is a signed link; complaints arrive through `POST /api/suppressions` (a provider webhook would call it); only SMTP 550/551/553/554 count as a hard bounce. There are no asynchronous bounce emails (DSNs) because Ethereal sends none.
+- **Search can lag, not lose.** Index work is written to a PostgreSQL outbox in the same transaction as the emails and published after Redis is back. Elasticsearch stays a rebuildable projection (`pnpm reindex`).
+- **Event replay is bounded.** Each user keeps the last 500 events for one hour. A client that was away longer gets a `resync` event and refetches the lists.
 - **Redis is the execution index, not the truth.** With AOF `everysec`, a Redis crash can lose one second of queue writes; the reconciler rebuilds those jobs from PostgreSQL.
 
 ## Project structure

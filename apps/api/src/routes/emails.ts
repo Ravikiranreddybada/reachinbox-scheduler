@@ -57,7 +57,10 @@ const listSelect = {
   campaignId: true,
   recipient: true,
   subject: true,
+  // Legacy rows only; new rows keep the body on the campaign, so this is NULL
+  // (and free to read). The preview normally comes from Campaign.preview.
   body: true,
+  campaign: { select: { preview: true } },
   status: true,
   scheduledAt: true,
   sentAt: true,
@@ -68,13 +71,18 @@ const listSelect = {
   archivedAt: true,
 } satisfies Prisma.EmailSelect;
 
-/** The list never ships full bodies (up to 100 KB each); a preview is enough. */
-function toListItem({ body, ...email }: Prisma.EmailGetPayload<{ select: typeof listSelect }>) {
-  const flat = htmlToText(body).replace(/\s+/g, ' ');
-  return {
-    ...email,
-    preview: flat.length > PREVIEW_LENGTH ? `${flat.slice(0, PREVIEW_LENGTH)}…` : flat,
-  };
+/** A plain-text snippet. Lists show this and never read or ship a full body. */
+export function makePreview(html: string): string {
+  const flat = htmlToText(html).replace(/\s+/g, ' ').trim();
+  return flat.length > PREVIEW_LENGTH ? `${flat.slice(0, PREVIEW_LENGTH)}…` : flat;
+}
+
+function toListItem({
+  body,
+  campaign,
+  ...email
+}: Prisma.EmailGetPayload<{ select: typeof listSelect }>) {
+  return { ...email, preview: campaign.preview || (body ? makePreview(body) : '') };
 }
 
 router.post(
@@ -148,6 +156,8 @@ router.post(
               payloadHash: plan.payloadHash,
               hourlyLimit: data.hourlyLimit,
               subject: data.subject,
+              body: data.body,
+              preview: makePreview(data.body),
               recipientCount: plan.emails.length,
               startsAt: startAt,
             },
@@ -166,11 +176,16 @@ router.post(
               campaignId: created.id,
               recipient: email.recipient,
               subject: data.subject,
-              body: data.body,
               scheduledAt: email.scheduledAt,
               idempotencyKey: email.idempotencyKey,
             })),
           });
+          // Outbox row in the same transaction: if the process dies before the
+          // search job is queued, the reconciler still indexes these emails.
+          await tx.$executeRaw`
+            INSERT INTO "SearchOutbox" ("emailId")
+            SELECT "id" FROM "Email" WHERE "campaignId" = ${created.id}
+            ON CONFLICT DO NOTHING`;
           return created;
         });
       } catch (error) {
@@ -207,9 +222,19 @@ router.post(
         where: { campaignId: campaign.id },
         select: { id: true },
       });
-      enqueueSearchSync(ids.map((row) => row.id)).catch((error) =>
-        logger.warn({ event: 'search.enqueue_failed', campaignId: campaign.id, err: error }),
-      );
+      enqueueSearchSync(ids.map((row) => row.id))
+        .then((queued) =>
+          // Queued: the outbox rows have done their job. If Redis was down,
+          // enqueueSearchSync kept them and the reconciler drains them.
+          queued
+            ? prisma.$executeRaw`
+                DELETE FROM "SearchOutbox" WHERE "emailId" IN
+                  (SELECT "id" FROM "Email" WHERE "campaignId" = ${campaign.id})`
+            : undefined,
+        )
+        .catch((error) =>
+          logger.warn({ event: 'search.enqueue_failed', campaignId: campaign.id, err: error }),
+        );
       publishEvent(userId, { type: 'campaign.accepted', campaignId: campaign.id, count: accepted });
       logger.info({ event: 'campaign.accepted', userId, campaignId: campaign.id, accepted });
     }
@@ -308,7 +333,10 @@ router.get(
     const { id } = idParam.parse(req.params);
     const email = await prisma.email.findFirst({
       where: { id, userId: req.userId! },
-      include: { sender: { select: { email: true, displayName: true } } },
+      include: {
+        sender: { select: { email: true, displayName: true } },
+        campaign: { select: { body: true } },
+      },
     });
     if (!email) throw new HttpError(404, 'Email not found');
     if (email.deletedAt) throw new HttpError(404, 'Email not found');
@@ -317,8 +345,8 @@ router.get(
       select: { id: true, filename: true, contentType: true, size: true },
       orderBy: { createdAt: 'asc' },
     });
-    const { idempotencyKey: _key, userId: _user, ...rest } = email;
-    res.json({ ...rest, attachments });
+    const { idempotencyKey: _key, userId: _user, campaign, ...rest } = email;
+    res.json({ ...rest, body: email.body ?? campaign.body ?? '', attachments });
   }),
 );
 

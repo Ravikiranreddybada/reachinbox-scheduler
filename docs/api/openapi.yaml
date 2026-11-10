@@ -279,10 +279,103 @@ paths:
                   campaignId: { type: string }
                   cancelled: { type: integer }
                   inFlight: { type: integer, description: Emails already being sent }
+  /api/senders:
+    get:
+      security: [{ sessionCookie: [] }]
+      summary: Sender addresses of the user, with whether each has its own SMTP login
+      responses:
+        '200':
+          description: Senders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        email: { type: string }
+                        displayName: { type: string, nullable: true }
+                        smtpConfigured: { type: boolean }
+  /api/senders/{id}/smtp:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    put:
+      security: [{ sessionCookie: [] }]
+      summary: Set this sender's own SMTP login (password stored encrypted, never returned)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, password]
+              properties:
+                user: { type: string }
+                password: { type: string }
+                verify:
+                  {
+                    type: boolean,
+                    default: true,
+                    description: Check the login against the SMTP server first,
+                  }
+      responses:
+        '200': { description: Saved }
+        '404': { description: Sender not found }
+        '422': { description: The SMTP server rejected the login }
+    delete:
+      security: [{ sessionCookie: [] }]
+      summary: Remove the sender's own login; it falls back to the shared account
+      responses:
+        '204': { description: Removed }
+  /api/suppressions:
+    get:
+      security: [{ sessionCookie: [] }]
+      summary: The user's suppression list
+      responses:
+        '200': { description: Suppressed recipients (unsubscribe, bounce, complaint) }
+    post:
+      security: [{ sessionCookie: [] }]
+      summary: Suppress a recipient (also the hook for a provider complaint or bounce webhook)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+                reason: { type: string, enum: [UNSUBSCRIBE, BOUNCE, COMPLAINT], default: COMPLAINT }
+                note: { type: string }
+      responses:
+        '201': { description: Suppressed; unclaimed emails to this address are cancelled }
+  /api/suppressions/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    delete:
+      security: [{ sessionCookie: [] }]
+      summary: Remove an address from the suppression list
+      responses:
+        '204': { description: Removed }
+  /unsubscribe/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Confirmation page (does not unsubscribe; mail scanners prefetch links)
+      responses:
+        '200': { description: HTML page }
+        '404': { description: Invalid token }
+    post:
+      summary: Unsubscribe (RFC 8058 one-click compatible). The signed token is the credential
+      responses:
+        '200': { description: Unsubscribed }
+        '404': { description: Invalid token }
   /api/events:
     get:
       security: [{ sessionCookie: [] }]
-      summary: Server-Sent Events stream of the tenant's status changes
+      summary: Server-Sent Events stream of the tenant's status changes. Each frame has an `id`; send it back as `Last-Event-ID` after a reconnect to replay missed events. A `{"type":"resync"}` frame means some events are gone and the client should refetch.
       responses:
         '200':
           description: 'text/event-stream; each data frame is JSON such as {"type":"email.status","emailId":"…","status":"SENT"}'

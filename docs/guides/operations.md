@@ -29,14 +29,17 @@ Pacing and quotas hold across replicas (Redis Lua reservation). Throughput scale
 
 ## Recovery
 
-| Situation                  | What happens / what to do                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------------------------- |
-| Redis lost jobs            | Leader-elected reconciler re-creates them from PostgreSQL. Automatic.                              |
-| Worker died mid-send       | Lease expires (`PROCESSING_LEASE_MS`), email is reclaimed.                                         |
-| SMTP down                  | Worker refuses to start if credentials are wrong; sends retry with backoff, then `FAILED` after 5. |
-| Failed email               | `POST /api/emails/:id/retry`.                                                                      |
-| Search index stale or lost | `pnpm --filter @reachinbox/api reindex` (rebuilds from PostgreSQL).                                |
-| Session must end now       | Logout writes a Redis deny-list entry. Instant.                                                    |
+| Situation                  | What happens / what to do                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Redis lost jobs            | Leader-elected reconciler re-creates them from PostgreSQL. Automatic.                                                          |
+| Worker died mid-send       | Lease expires (`PROCESSING_LEASE_MS`), email is reclaimed.                                                                     |
+| SMTP down                  | Worker refuses to start if credentials are wrong; sends retry with backoff, then `FAILED` after 5.                             |
+| Failed email               | `POST /api/emails/:id/retry`.                                                                                                  |
+| Search index stale or lost | `pnpm reindex` (rebuilds from PostgreSQL). Index work missed during a Redis outage is published from the outbox automatically. |
+| Far-future emails          | Held in PostgreSQL; the reconciler queues them within `ENQUEUE_HORIZON_MS` of their time.                                      |
+| Recipient complaint        | `POST /api/suppressions` (a provider webhook can call it). Unclaimed emails to it are cancelled.                               |
+| Rotate the encryption key  | New key in `DATA_ENCRYPTION_KEY`, old key in `DATA_ENCRYPTION_KEY_PREVIOUS`, run `pnpm rotate-secrets`.                        |
+| Session must end now       | Logout writes a Redis deny-list entry. Instant.                                                                                |
 
 ## Shutdown
 

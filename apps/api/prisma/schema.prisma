@@ -27,7 +27,35 @@ model User {
   emails          Email[]
   campaigns       Campaign[]
   attachments     Attachment[]
+  suppressions    Suppression[]
   slackConnection SlackConnection?
+}
+
+enum SuppressionReason {
+  UNSUBSCRIBE
+  BOUNCE
+  COMPLAINT
+}
+
+/// Recipients a user must not email again. The worker checks this before every send.
+model Suppression {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String
+  reason    SuppressionReason
+  note      String?
+  createdAt DateTime          @default(now())
+
+  @@unique([userId, email])
+}
+
+/// Transactional outbox for the search projection. A row is written in the same
+/// transaction as the email, and removed once the sync job is queued.
+model SearchOutbox {
+  id        Int      @id @default(autoincrement())
+  emailId   String   @unique
+  createdAt DateTime @default(now())
 }
 
 model Campaign {
@@ -38,6 +66,10 @@ model Campaign {
   payloadHash    String
   hourlyLimit    Int?
   subject        String    @default("")
+  /// The message body is stored once per campaign, not once per recipient.
+  body           String?   @db.Text
+  /// Plain-text snippet for list views, so lists never read the body.
+  preview        String    @default("")
   recipientCount Int       @default(0)
   startsAt       DateTime?
   createdAt      DateTime  @default(now())
@@ -54,6 +86,10 @@ model Sender {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   email       String
   displayName String?
+  /// Optional own SMTP login. Without it the sender uses the shared default account.
+  smtpUser     String?
+  /// AES-256-GCM ciphertext (enc:v1:...). See src/lib/crypto.ts.
+  smtpPassword String?
   createdAt   DateTime @default(now())
   emails      Email[]
 
@@ -71,7 +107,8 @@ model Email {
   campaign            Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   recipient           String
   subject             String
-  body                String      @db.Text
+  /// Legacy rows only. New rows read the body from Campaign.body.
+  body                String?     @db.Text
   scheduledAt         DateTime
   sentAt              DateTime?
   status              EmailStatus @default(SCHEDULED)
@@ -93,6 +130,7 @@ model Email {
   @@index([status, processingStartedAt])
   @@index([campaignId, status])
   @@index([userId, deletedAt, archivedAt])
+  @@index([status, scheduledAt])
 }
 
 model Attachment {

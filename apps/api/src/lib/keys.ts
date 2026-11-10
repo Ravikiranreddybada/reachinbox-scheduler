@@ -32,4 +32,6 @@ export const keys = {
   leaderLock: (name: string) => `ri:lock:${name}`,
   userEvents: (userId: string) => `ri:events:${userId}`,
   userEventsPattern: 'ri:events:*',
+  // Capped Redis stream of recent events, replayed after an SSE reconnect.
+  userEventLog: (userId: string) => `ri:eventlog:${userId}`,
 } as const;

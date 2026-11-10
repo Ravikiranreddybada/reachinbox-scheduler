@@ -276,8 +276,10 @@
           <b>Mitrajit</b> and <b>Yadav036</b> as repo collaborators, submit the ClickUp form.
         </p>
         <p class="mute">
-          I read the code. I did not re-run tests or the stack (needs Docker + credentials). Test
-          files exist for gate, worker, routes, recovery, crypto.
+          Last verified 10 Nov 2026: 100 tests pass (46 unit, 54 integration on real Redis and
+          Postgres), plus a live kill -9 restart test. All 11 flaws from the audit are fixed
+          (section 7). Quotas are sliding-window with refunds, Redis-loss rebuild and a global cap.
+          A crash mid-send fails the email instead of resending it.
         </p>
       </div>
       <div class="card warnbox">
@@ -540,14 +542,18 @@
               &rarr; 409.
             </li>
             <li>
-              Transaction: create sender (<code>ON CONFLICT DO NOTHING</code>), campaign, N email
-              rows.
+              Transaction: create sender (<code>ON CONFLICT DO NOTHING</code>), campaign (body and
+              preview stored once), N slim email rows, N search-outbox rows.
             </li>
             <li>
               After commit: <code>addBulk</code> jobs in chunks of 500 with
-              <code>delay = scheduledAt - now</code>.
+              <code>delay = scheduledAt - now</code>, only for emails due within the queue horizon
+              (6 h). Later emails wait in Postgres; the reconciler queues them in time.
             </li>
-            <li>Queue search-sync job. Return 202.</li>
+            <li>
+              Queue search-sync job and clear the outbox rows (if Redis is down, the outbox keeps
+              them). Return 202.
+            </li>
           </ol>
         </div>
         <div class="card">
@@ -555,6 +561,10 @@
           <ol class="steps">
             <li>Load row. If already terminal, stop.</li>
             <li><b>Receipt check.</b> Redis key says SMTP already accepted? Just mark SENT.</li>
+            <li>
+              <b>Suppression check.</b> Recipient unsubscribed, complained, or bounced? Mark
+              CANCELLED. No quota, no SMTP.
+            </li>
             <li>
               <b>Reserve slot</b> (Lua): <code>slot = max(now, lastSlot + 2s)</code>. Count sender,
               campaign, tenant quota for the hour of that slot. Full &rarr; move job to next hour +
@@ -566,10 +576,15 @@
               <b>Claim</b>: <code>UPDATE ... SET PROCESSING WHERE SCHEDULED</code> (or stale lease).
               One winner.
             </li>
-            <li>Send with stable <code>Message-ID: &lt;emailId@reachinbox.local&gt;</code>.</li>
+            <li>
+              Send with stable <code>Message-ID: &lt;emailId@reachinbox.local&gt;</code>, through
+              the sender's own SMTP login if it has one. Unsubscribe link and header included.
+            </li>
             <li>Write Redis receipt, then Postgres SENT, publish SSE event, queue search sync.</li>
             <li>
-              SMTP error &rarr; back to SCHEDULED, BullMQ retries (5x exponential), then FAILED.
+              Temporary SMTP error &rarr; back to SCHEDULED, BullMQ retries (5x exponential), then
+              FAILED. Permanent error (5xx) &rarr; FAILED at once; 550/551/553/554 also suppress the
+              address.
             </li>
           </ol>
         </div>
@@ -580,7 +595,9 @@
           Jobs live in Redis (AOF every second) <b>and</b> as rows in Postgres. On boot, and every 5
           min, one process (leader lock) scans all <code>SCHEDULED</code> rows. Any row with no live
           job gets a new job with the same ID. Any <code>PROCESSING</code> row older than the 5 min
-          lease goes back to <code>SCHEDULED</code>. So even if Redis is wiped, nothing is lost.
+          lease goes back to <code>SCHEDULED</code>; on its next claim it is marked
+          <code>FAILED</code> (&ldquo;outcome unknown&rdquo;), never resent. Even if Redis is wiped,
+          no email is lost.
         </p>
         <p class="mute">
           This is <code>setInterval</code>, not cron. Scheduling itself is BullMQ delayed jobs. The
@@ -626,7 +643,7 @@
               BullMQ's global limiter capped the <i>whole system</i>. Reservation = one atomic call,
               job sleeps till its slot.
             </td>
-            <td>Failed sends still burn quota. Redis is on the hot path.</td>
+            <td>Cancelled and known-failed sends refund quota. Redis is on the hot path.</td>
           </tr>
           <tr>
             <td>Quota charged to hour of the <i>slot</i></td>
@@ -645,7 +662,10 @@
           </tr>
           <tr>
             <td>Claim via compare-and-set + lease</td>
-            <td>Two workers can't both own an email. Dead worker's lease expires.</td>
+            <td>
+              Two workers can't both own an email. Dead worker's lease expires; the email is then
+              failed, not resent.
+            </td>
             <td>Lease length = recovery delay.</td>
           </tr>
           <tr>
@@ -654,7 +674,7 @@
               SMTP has no idempotency. If DB fails after sending, retry sees receipt and doesn't
               resend.
             </td>
-            <td>Tiny duplicate window remains. At-least-once, not exactly-once.</td>
+            <td>Crash mid-send is failed, not resent (at-most-once after claim).</td>
           </tr>
           <tr>
             <td>Search is async projection (ADR 0004)</td>
@@ -708,9 +728,10 @@
           <tr>
             <td>Redis restarts / is wiped</td>
             <td>
-              AOF restores; else reconciler rebuilds from Postgres. Pace/quota counters reset.
+              AOF restores; else reconciler rebuilds jobs and the hourly quota sets from Postgres
+              (emails sent in the last hour).
             </td>
-            <td><span class="tag md">quota counters lost</span></td>
+            <td><span class="tag lo">reserved slots re-reserved</span></td>
           </tr>
           <tr>
             <td>Worker dies before SMTP</td>
@@ -719,8 +740,11 @@
           </tr>
           <tr>
             <td>Worker dies after SMTP, before receipt</td>
-            <td>Lease expires, job re-sends.</td>
-            <td><span class="tag md">possible duplicate</span></td>
+            <td>
+              Claim marker stays in Postgres. Next attempt marks the row FAILED ("outcome unknown").
+              Never re-sent.
+            </td>
+            <td><span class="tag md">one manual resend</span></td>
           </tr>
           <tr>
             <td>Postgres fails after SMTP</td>
@@ -749,7 +773,8 @@
       <div class="card warnbox">
         <p>
           <b>No, not as built.</b> It is correct and well reasoned, but it has one Postgres, one
-          Redis, one ES node, one SMTP account, and a full-table reconciler.
+          Redis, and one ES node. The reconciler is now bounded by the queue horizon and senders can
+          have their own SMTP login (section 7), but sharding is still future work.
         </p>
       </div>
       <h3>Assumptions (say them out loud)</h3>
@@ -772,22 +797,23 @@
           </tr>
           <tr>
             <td>1</td>
-            <td>Reconciler full scan</td>
+            <td>Reconciler scan <span class="tag ok">bounded now</span></td>
             <td>
-              Reads <i>every</i> SCHEDULED row, then <code>getJobState</code> per row = hundreds of
-              millions of Redis calls every 5 min. ADR 0001 admits this.
+              Used to read <i>every</i> SCHEDULED row. It now reads only rows due inside the queue
+              horizon, so cost follows the horizon, not the backlog.
             </td>
             <td>
-              Scan only rows due soon via <code>(status, scheduledAt)</code>; or drop per-email jobs
-              (see #2).
+              Done: <code>(status, scheduledAt)</code> index and horizon. Next step at 1M users: a
+              dispatcher with <code>SKIP LOCKED</code> (see #2).
             </td>
           </tr>
           <tr>
             <td>2</td>
-            <td>One BullMQ job per email in one Redis</td>
+            <td>One BullMQ job per email in one Redis <span class="tag ok">horizon now</span></td>
             <td>
-              50M delayed jobs &times; ~1 KB = ~50 GB RAM in one Redis. Completed-job history adds
-              more.
+              Used to be 50M delayed jobs &times; ~1 KB. Now only emails due in the next 6 h own a
+              job. At 5k/s peak that is still a lot of Redis memory, so a dispatcher is the next
+              step.
             </td>
             <td>
               <b>Just-in-time dispatch:</b> emails live only in Postgres. A dispatcher pulls rows
@@ -799,19 +825,19 @@
             <td>3</td>
             <td>Single Postgres</td>
             <td>
-              5,000 rows with a 100 KB body copied into each = up to 500 MB per campaign. One
+              The body is now stored once per campaign (was up to 500 MB per campaign). Still one
               primary. <code>groupBy</code> stats scan per user.
             </td>
-            <td>
-              Store body once on campaign. Partition <code>email</code>. PgBouncer. Read replicas.
-              Cached counters.
-            </td>
+            <td>Partition <code>email</code>. PgBouncer. Read replicas. Cached counters.</td>
           </tr>
           <tr>
             <td>4</td>
             <td>Attachments in Postgres <code>Bytes</code></td>
-            <td>Worker loads up to 10&times;5 MB from DB <i>per email</i>.</td>
-            <td>Object storage; fetch once per campaign.</td>
+            <td>
+              Workers now cache them per campaign (LRU), so the DB is read once per campaign per
+              worker, not per email. Bytes still live in Postgres.
+            </td>
+            <td>Object storage.</td>
           </tr>
           <tr>
             <td>5</td>
@@ -824,26 +850,30 @@
           </tr>
           <tr>
             <td>6</td>
-            <td>One SMTP account; "From" is free text</td>
+            <td>SMTP identity and reputation</td>
             <td>
-              All senders share one Ethereal login. No per-sender credentials, DKIM/SPF, bounces,
-              warm-up.
+              Senders can now have their own login, and unsubscribe, complaint and bounce handling
+              exist. No DKIM/SPF or warm-up; Ethereal sends no async bounces.
             </td>
-            <td>Per-sender credentials or SES/SendGrid. Bounce + complaint webhooks.</td>
+            <td>
+              SES/SendGrid. Provider bounce + complaint webhooks into
+              <code>/api/suppressions</code>.
+            </td>
           </tr>
           <tr>
             <td>7</td>
             <td>SSE on API nodes</td>
             <td>
               Each node holds sockets; every event is fanned to every node's pattern subscriber.
+              Missed events replay after a reconnect (last 500, 1 h).
             </td>
             <td>Dedicated realtime gateway.</td>
           </tr>
           <tr>
             <td>8</td>
             <td>Elasticsearch single node</td>
-            <td>Indexes full body of every email.</td>
-            <td>Multi-node cluster, ILM, fed by outbox + Kafka.</td>
+            <td>Indexes full body of every email. Security is on; outbox keeps it fed.</td>
+            <td>Multi-node cluster, ILM, Kafka behind the outbox.</td>
           </tr>
           <tr>
             <td>9</td>
@@ -912,8 +942,8 @@
             schedule.
           </li>
           <li>
-            <b>Admit:</b> keep the Lua slot-reservation idea (good and cluster-safe). Move from
-            fixed hour windows to a token bucket / sliding window.
+            <b>Admit:</b> keep the Lua slot-reservation idea (good and cluster-safe). Quotas are
+            already a sliding window; add tenant-level token buckets.
           </li>
           <li>
             <b>Send:</b> per-sender SMTP creds or provider; bounce/complaint handling stops bad
@@ -935,97 +965,132 @@
         </p>
       </div>
 
-      <h2 id="flaws">7. Flaws and gaps (honest list)</h2>
+      <h2 id="flaws">7. Flaws and gaps (all 11 fixed)</h2>
       <p class="mute">
-        Ranked. Per your project rules, I am not suggesting production work for the submission. This
-        is so you can answer questions.
+        Each flaw from the earlier audit now has a fix in the repo, a test, and a trade-off. Per
+        your project rules, this is assignment-scope work, not production hardening. Fixed means the
+        code changed and is covered by the unit or integration suite.
       </p>
       <div class="tbl">
         <table>
           <tr>
             <th>Sev</th>
             <th>Flaw</th>
-            <th>Where</th>
-            <th>Detail</th>
+            <th>Status</th>
+            <th>Fix and where</th>
           </tr>
           <tr>
             <td><span class="tag hi">HIGH</span></td>
             <td>Reconciler is O(all scheduled rows)</td>
-            <td><code>services/recovery.ts</code></td>
+            <td><span class="tag ok">FIXED</span></td>
             <td>
-              Pages through every SCHEDULED row and calls <code>getJobState</code> for each, every 5
-              min. Fine for thousands, breaks at millions.
+              <code>services/recovery.ts</code> reads only rows due inside the queue horizon, using
+              the new <code>(status, scheduledAt)</code> index. Cost follows the horizon, not the
+              backlog. Unit test checks the query. ADR 0005.
             </td>
           </tr>
           <tr>
             <td><span class="tag hi">HIGH</span></td>
             <td>One BullMQ delayed job per email</td>
-            <td><code>queues/emailQueue.ts</code></td>
+            <td><span class="tag ok">FIXED</span></td>
             <td>
-              Redis memory grows with emails scheduled in advance. Redis is the scale ceiling.
+              <code>queues/emailQueue.ts</code>: only emails due within
+              <code>ENQUEUE_HORIZON_MS</code> (default 6 h) get a job. Later ones stay in Postgres
+              and the reconciler queues them when they come into range. Integration test: a week-out
+              email has no job until then. Trade-off: queueing lags by up to one tick.
             </td>
           </tr>
           <tr>
             <td><span class="tag hi">HIGH</span></td>
             <td>"Multiple senders" share one SMTP login</td>
-            <td><code>emailWorker.ts</code></td>
+            <td><span class="tag ok">FIXED</span></td>
             <td>
-              Sender is only the From address; auth is one Ethereal user. Meets the assignment (fake
-              SMTP) but is not real multi-account sending.
+              <code>services/transports.ts</code>, <code>routes/senders.ts</code>: a sender can have
+              its own SMTP login (encrypted at rest, own pooled connection). Without one it uses the
+              shared account. Ethereal is still a fake inbox, so this proves the wiring.
             </td>
           </tr>
           <tr>
             <td><span class="tag md">MED</span></td>
             <td>Body copied into every email row</td>
-            <td><code>routes/emails.ts</code></td>
+            <td><span class="tag ok">FIXED</span></td>
             <td>
-              5,000 rows &times; up to 100 KB. Heavy transaction and storage. List queries also
-              select <code>body</code> to build a preview.
+              Body is stored once on the campaign; lists read a stored
+              <code>Campaign.preview</code>. Migration moved existing bodies up and cleared the row
+              copies. Integration tests check null row bodies, the preview, and the detail route.
             </td>
           </tr>
           <tr>
             <td><span class="tag md">MED</span></td>
             <td>Attachments in Postgres, reloaded per send</td>
-            <td>schema, worker</td>
-            <td>Up to 5 MB each loaded from DB for every recipient.</td>
+            <td><span class="tag ok">FIXED</span></td>
+            <td>
+              <code>services/attachmentCache.ts</code>: per-worker LRU, bounded by
+              <code>ATTACHMENT_CACHE_BYTES</code>. A campaign reads its files once, not once per
+              recipient. Bytes still live in Postgres (no object storage).
+            </td>
           </tr>
           <tr>
             <td><span class="tag md">MED</span></td>
             <td>No bounce / complaint / unsubscribe handling</td>
-            <td>-</td>
-            <td>Out of brief scope, but a real cold-email product needs it.</td>
+            <td><span class="tag ok">FIXED</span></td>
+            <td>
+              Suppression list, signed unsubscribe link with
+              <code>List-Unsubscribe</code> headers, complaint endpoint, and SMTP 5xx handling (no
+              retry; 550/551/553/554 suppress the address). The worker skips suppressed recipients
+              before quota is charged. ADR 0006. Ethereal sends no async bounce emails, so only
+              synchronous rejections are handled.
+            </td>
           </tr>
           <tr>
             <td><span class="tag lo">LOW</span></td>
             <td>Reconciler timer lives in API only</td>
-            <td><code>server.ts</code></td>
-            <td>If no API runs, only the worker's start-up reconcile runs.</td>
+            <td><span class="tag ok">FIXED</span></td>
+            <td>
+              <code>startReconcileLoop()</code> runs in both the API and the worker. The leader lock
+              keeps it single.
+            </td>
           </tr>
           <tr>
             <td><span class="tag lo">LOW</span></td>
             <td>Encryption key falls back to SESSION_SECRET</td>
-            <td><code>config/env.ts</code></td>
-            <td>Fine locally. No KMS or rotation.</td>
+            <td><span class="tag ok">FIXED</span></td>
+            <td>
+              <code>DATA_ENCRYPTION_KEY</code> is required. Rotation:
+              <code>DATA_ENCRYPTION_KEY_PREVIOUS</code> plus <code>pnpm rotate-secrets</code>. Unit
+              test covers rotation and no silent fallback. Still no KMS.
+            </td>
           </tr>
           <tr>
             <td><span class="tag lo">LOW</span></td>
             <td>ES: no security, single node</td>
-            <td>docker-compose</td>
-            <td>Local demo setting.</td>
+            <td><span class="tag ok">FIXED</span></td>
+            <td>
+              docker-compose turns Elasticsearch security on (user <code>elastic</code>); the API
+              signs in with <code>ELASTICSEARCH_USERNAME/PASSWORD</code>. Verified: no-auth request
+              gets 401. Still a single node, which is fine for the demo.
+            </td>
           </tr>
           <tr>
             <td><span class="tag lo">LOW</span></td>
             <td>SSE per node, no replay</td>
-            <td><code>events/stream.ts</code></td>
-            <td>Events missed during a disconnect are not replayed; list refetch covers it.</td>
+            <td><span class="tag ok">FIXED</span></td>
+            <td>
+              <code>events/publisher.ts</code>, <code>events/stream.ts</code>: every event goes to a
+              capped per-user Redis stream and carries an SSE <code>id</code>. A reconnect with
+              <code>Last-Event-ID</code> replays what was missed; a trimmed log sends
+              <code>resync</code>. Integration test covers the replay. Each node still has its own
+              sockets.
+            </td>
           </tr>
           <tr>
             <td><span class="tag lo">LOW</span></td>
             <td>Search can miss docs</td>
-            <td>ADR 0004</td>
+            <td><span class="tag ok">FIXED</span></td>
             <td>
-              If Redis is down at enqueue time, the doc is not indexed.
-              <code>pnpm reindex</code> repairs. No outbox yet.
+              Search outbox in Postgres, written in the schedule transaction and drained by the
+              reconciler if Redis was down. ADR 0007. <code>pnpm reindex</code> remains for other
+              drift.
             </td>
           </tr>
         </table>
@@ -1089,7 +1154,8 @@
         <div class="card">
           <b>What if Redis dies?</b>
           <p>
-            Schedules are in Postgres. Reconciler recreates jobs. Quota counters reset (known gap).
+            Schedules are in Postgres. Reconciler recreates jobs. Hourly quota sets are rebuilt from
+            Postgres sent rows.
           </p>
         </div>
         <div class="card">

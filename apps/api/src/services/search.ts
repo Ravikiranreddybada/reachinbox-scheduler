@@ -46,6 +46,9 @@ export async function ensureSearchIndex(): Promise<void> {
   });
 }
 
+/** Load rows with the campaign body: new rows keep their body on the campaign only. */
+export const withCampaignBody = { campaign: { select: { body: true } } } as const;
+
 type IndexableEmail = Pick<
   Email,
   | 'id'
@@ -58,7 +61,7 @@ type IndexableEmail = Pick<
   | 'scheduledAt'
   | 'sentAt'
   | 'updatedAt'
->;
+> & { campaign: { body: string | null } };
 
 function toDocument(email: IndexableEmail) {
   return {
@@ -66,7 +69,7 @@ function toDocument(email: IndexableEmail) {
     campaignId: email.campaignId,
     recipient: email.recipient,
     subject: email.subject,
-    body: htmlToText(email.body),
+    body: htmlToText(email.body ?? email.campaign.body ?? ''),
     status: email.status,
     scheduledAt: email.scheduledAt,
     sentAt: email.sentAt,
@@ -110,7 +113,10 @@ export async function indexEmails(
 
 /** State-based sync: always index the current PostgreSQL row, never an event payload. */
 export async function syncEmailsById(emailIds: string[]): Promise<void> {
-  const rows = await prisma.email.findMany({ where: { id: { in: emailIds } } });
+  const rows = await prisma.email.findMany({
+    where: { id: { in: emailIds } },
+    include: withCampaignBody,
+  });
   const result = await indexEmails(rows);
   // Rows deleted in PostgreSQL (for example a deleted account) leave the projection too.
   const found = new Set(rows.map((row) => row.id));

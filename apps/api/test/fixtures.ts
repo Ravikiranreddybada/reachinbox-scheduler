@@ -24,6 +24,8 @@ export async function createCampaign(
       payloadHash: randomUUID(),
       hourlyLimit: options.hourlyLimit,
       subject: 'Integration',
+      body: 'Hello from the integration suite.',
+      preview: 'Hello from the integration suite.',
       recipientCount: recipients,
     },
   });
@@ -35,7 +37,6 @@ export async function createCampaign(
       campaignId: campaign.id,
       recipient: `r${index}@example.com`,
       subject: 'Integration',
-      body: 'Hello from the integration suite.',
       scheduledAt,
       idempotencyKey: randomUUID(),
     })),

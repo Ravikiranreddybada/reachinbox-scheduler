@@ -20,7 +20,7 @@ This document records what ReachInbox Scheduler guarantees, how each guarantee i
 
 ## Write path
 
-`POST /api/emails` validates the payload, normalises and de-duplicates recipients, computes the per-recipient schedule (`scheduledAt + i × delayBetweenMs`), and commits the campaign plus every email row in one transaction. Only after commit does it publish BullMQ jobs (in chunks of 500) with `jobId = emailId`, so re-publishing is a no-op. Search documents are queued on the `search-sync` queue; the request never waits for Elasticsearch.
+`POST /api/emails` validates the payload, normalises and de-duplicates recipients, computes the per-recipient schedule (`scheduledAt + i × delayBetweenMs`), and commits the campaign plus every email row in one transaction. The message body is stored once on the campaign, and a plain-text preview is stored for lists; email rows carry no body. A search-outbox row per email commits in the same transaction. Only after commit does it publish BullMQ jobs (in chunks of 500) with `jobId = emailId`, so re-publishing is a no-op, and only for emails due within `ENQUEUE_HORIZON_MS` (see [ADR 0005](../adr/0005-bounded-queue-horizon.md)). Search documents are queued on the `search-sync` queue; the request never waits for Elasticsearch, and if Redis is down the outbox keeps the work ([ADR 0007](../adr/0007-search-outbox.md)).
 
 Sender creation uses `INSERT … ON CONFLICT DO NOTHING`. Prisma's `upsert` is read-then-write and failed under concurrent requests; the integration suite found this.
 
@@ -34,6 +34,10 @@ The dashboard creates one idempotency key per compose session. The server stores
 - Each email gets a derived key `sha256(key ‖ recipient)` with a unique index.
 
 ## Delivery path
+
+### 0. Suppression check
+
+If the recipient is on the user's suppression list (unsubscribed, complained, bounced), the row becomes `CANCELLED` and nothing else happens: no quota, no SMTP. See [ADR 0006](../adr/0006-suppression-and-bounces.md).
 
 ### 1. Receipt check
 
@@ -61,7 +65,7 @@ A reservation spaces permissions. BullMQ timers can still run a late job right n
 
 ### 5. Send and record
 
-SMTP send with a stable `Message-ID: <emailId@reachinbox.local>`. Then the receipt goes to Redis, then `SENT` to PostgreSQL, then a status event to Redis pub/sub and a search-sync job. On an SMTP error the row returns to `SCHEDULED` and BullMQ retries with exponential backoff (5 attempts), after which it becomes `FAILED`. A retry passes admission again.
+SMTP send with a stable `Message-ID: <emailId@reachinbox.local>`, through the sender's own SMTP login when it has one (otherwise the shared account), with an unsubscribe link and `List-Unsubscribe` headers. Attachment bytes come from a per-worker LRU cache. Then the receipt goes to Redis, then `SENT` to PostgreSQL, then a status event to Redis pub/sub and a search-sync job. On a temporary SMTP error the row returns to `SCHEDULED` and BullMQ retries with exponential backoff (5 attempts), after which it becomes `FAILED`. A retry passes admission again. A permanent error (SMTP 5xx) fails at once with no retry; 550/551/553/554 also suppress the address.
 
 ## State machine
 
@@ -78,10 +82,11 @@ SCHEDULED ──claim──► PROCESSING ──► SENT
 
 ## Reconciliation (no cron)
 
-At API and worker startup and every `RECONCILE_INTERVAL_MS` on the API, one process (Redis leader lock with a fencing token) runs:
+At API and worker startup and every `RECONCILE_INTERVAL_MS` in both the API and the worker, one process (Redis leader lock with a fencing token) runs:
 
 1. `PROCESSING` rows with an expired lease → `SCHEDULED`.
-2. Every `SCHEDULED` row must own a live job (waiting, delayed, active, prioritized). A missing, completed, or failed job is recreated with the same ID. States are fetched in batches of 50.
+2. Every `SCHEDULED` row due within the queue horizon must own a live job (waiting, delayed, active, prioritized). A missing, completed, or failed job is recreated with the same ID. States are fetched in batches of 50. Rows beyond the horizon are not read; they are queued when they come into range.
+3. Search-sync work parked in the outbox is published and removed.
 
 ## Failure matrix
 
@@ -94,6 +99,8 @@ At API and worker startup and every `RECONCILE_INTERVAL_MS` on the API, one proc
 | Worker dies during SMTP, before receipt | Lease expires, job re-runs                                        | Possible duplicate (window: one Redis call); receivers can de-dupe on `Message-ID` |
 | PostgreSQL fails after SMTP accepted    | Retry finds the receipt and only records `SENT`                   | None                                                                               |
 | Elasticsearch down                      | `search-sync` jobs retry with backoff; `/health` reports degraded | Search is stale for a while                                                        |
+| Redis down when scheduling              | Rows commit; index work waits in the outbox; reconciler drains it | Search late, nothing lost                                                          |
+| Browser loses the live stream           | Reconnect sends `Last-Event-ID`; missed events replay             | None (a `resync` event covers a trimmed log)                                       |
 | Slack down                              | Alert key released for a later retry; delivery continues          | Alert only                                                                         |
 | Two workers pick one email              | CAS claim lets one proceed                                        | None                                                                               |
 
@@ -105,7 +112,7 @@ Writes are state-based: the sync job loads the current row and indexes it with `
 
 ## Horizontal scale
 
-- **API**: stateless. Sessions are signed cookies; logout writes the token ID to a Redis deny-list. HTTP rate limits count in Redis, so they hold across replicas. SSE uses one Redis subscriber per process.
+- **API**: stateless. Sessions are signed cookies; logout writes the token ID to a Redis deny-list. HTTP rate limits count in Redis, so they hold across replicas. SSE uses one Redis subscriber per process; every event is also kept in a capped per-user Redis stream (500 events, 1 h), and a reconnecting browser's `Last-Event-ID` replays what it missed.
 - **Workers**: add replicas for capacity. Throughput ≈ `senders × 1000 / MIN_SEND_INTERVAL_MS`, bounded by quotas and SMTP. Measured: ≈ 250 emails/s with 4 replicas, 20 senders, 50 ms spacing on a laptop, with zero duplicate attempts.
 - **First limits** and the plan for each:
   1. PostgreSQL connections → PgBouncer, smaller per-process pools.
@@ -118,7 +125,8 @@ Writes are state-based: the sync job loads the current row and indexes it with `
 - Google ID tokens verified for audience; only verified emails sign in. OAuth state is signed, expires in 10 minutes, and is bound to a browser nonce cookie.
 - Sessions: HS256 JWT with issuer, audience, expiry, and `jti`; HTTP-only, SameSite=Lax, Secure in production. Logout revokes the `jti` immediately.
 - Writes: Origin must equal the dashboard; cross-site Fetch-Metadata is rejected.
-- Slack webhook URL and token are encrypted with AES-256-GCM (`enc:v1:` prefix, random IV, authenticated). Disconnect revokes the token at Slack and always removes the local record.
+- Slack webhook URL, token and per-sender SMTP passwords are encrypted with AES-256-GCM (`enc:v1:` prefix, random IV, authenticated). `DATA_ENCRYPTION_KEY` is required (no derived fallback). Rotate by moving the old key to `DATA_ENCRYPTION_KEY_PREVIOUS` and running `pnpm rotate-secrets`.
+- Elasticsearch runs with security on in docker-compose; the API signs in as `elastic`. Disconnect revokes the token at Slack and always removes the local record.
 - Bull Board is restricted to operator emails; `/metrics` can require a bearer token.
 - Logs redact cookies, authorization headers, webhook URLs, and tokens.
 

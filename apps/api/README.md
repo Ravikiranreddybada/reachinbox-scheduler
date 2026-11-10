@@ -21,7 +21,7 @@ Express API and BullMQ workers. Two processes, scaled separately.
 
 ## Scripts
 
-`dev`, `worker`, `reindex`, `build`, `start`, `start:worker`, `typecheck`, `loadtest`, `ethereal:account`, `prisma:*`. Run from the repo root with `pnpm --filter @reachinbox/api <script>`.
+`dev`, `worker`, `reindex`, `build`, `start`, `start:worker`, `typecheck`, `loadtest`, `ethereal:account`, `rotate-secrets`, `prisma:*`. Run from the repo root with `pnpm --filter @reachinbox/api <script>`.
 
 ## Docs
 

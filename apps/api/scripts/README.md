@@ -6,6 +6,7 @@ Run from the repo root.
 | --------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------- |
 | `loadtest.ts`         | `pnpm loadtest`         | N emails, S senders, R in-process worker replicas competing via Redis. Fails if any invariant breaks. |
 | `ethereal-account.ts` | `pnpm ethereal:account` | Creates an Ethereal SMTP account and prints credentials for `.env`.                                   |
+| `rotate-secrets.ts`   | `pnpm rotate-secrets`   | Re-encrypts stored secrets (Slack, sender SMTP passwords) after a key change.                         |
 
 ## Load test
 

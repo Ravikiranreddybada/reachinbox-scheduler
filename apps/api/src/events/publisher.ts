@@ -16,13 +16,23 @@ export type CampaignEvent = {
 };
 export type DashboardEvent = EmailStatusEvent | CampaignEvent;
 
+/** Events kept per user for replay after a dropped connection. */
+export const EVENT_LOG_MAX = 500;
+const EVENT_LOG_TTL_SECONDS = 3600;
+
 /**
  * Fan-out over Redis pub/sub so any API replica can push an update to the
- * browser that is connected to it. Delivery is best-effort by design: the
- * dashboard treats an event as "refresh now" and PostgreSQL stays the truth.
+ * browser that is connected to it. Each event is also appended to a capped
+ * per-user Redis stream first, and its stream ID travels with the live message
+ * as the SSE `id`. After a disconnect the browser sends `Last-Event-ID` and the
+ * API replays what it missed. PostgreSQL stays the truth; a refresh also works.
  */
 export function publishEvent(userId: string, event: DashboardEvent): void {
-  redis
-    .publish(keys.userEvents(userId), JSON.stringify(event))
-    .catch((error) => logger.warn({ event: 'events.publish_failed', err: error }));
+  const payload = JSON.stringify(event);
+  const log = keys.userEventLog(userId);
+  void (async () => {
+    const id = await redis.xadd(log, 'MAXLEN', '~', String(EVENT_LOG_MAX), '*', 'd', payload);
+    await redis.expire(log, EVENT_LOG_TTL_SECONDS);
+    await redis.publish(keys.userEvents(userId), `${id} ${payload}`);
+  })().catch((error) => logger.warn({ event: 'events.publish_failed', err: error }));
 }

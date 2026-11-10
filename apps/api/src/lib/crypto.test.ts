@@ -1,10 +1,33 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+
+const OLD_KEY = Buffer.alloc(32, 7).toString('base64');
+const NEW_KEY = Buffer.alloc(32, 9).toString('base64');
+const state = vi.hoisted(() => ({ current: '', previous: [] as string[] }));
 
 vi.mock('../config/env.js', () => ({
-  env: { SESSION_SECRET: 'unit-test-secret-with-at-least-32-characters' },
+  env: {
+    get DATA_ENCRYPTION_KEY() {
+      return state.current;
+    },
+    get DATA_ENCRYPTION_KEY_PREVIOUS() {
+      return state.previous;
+    },
+  },
 }));
 
-import { decryptSecret, encryptSecret } from './crypto.js';
+async function loadWith(current: string, previous: string[] = []) {
+  state.current = current;
+  state.previous = previous;
+  vi.resetModules();
+  return import('./crypto.js');
+}
+
+let encryptSecret: typeof import('./crypto.js').encryptSecret;
+let decryptSecret: typeof import('./crypto.js').decryptSecret;
+
+beforeAll(async () => {
+  ({ decryptSecret, encryptSecret } = await loadWith(OLD_KEY));
+});
 
 describe('secret encryption at rest', () => {
   it('round-trips and never stores the plaintext', () => {
@@ -27,5 +50,17 @@ describe('secret encryption at rest', () => {
 
   it('reads legacy plaintext rows written before encryption', () => {
     expect(decryptSecret('https://hooks.slack.com/legacy')).toBe('https://hooks.slack.com/legacy');
+  });
+
+  it('rotates: a retired key still decrypts, and new writes use the new key', async () => {
+    const stored = encryptSecret('smtp-password');
+    const rotated = await loadWith(NEW_KEY, [OLD_KEY]);
+    expect(rotated.decryptSecret(stored)).toBe('smtp-password');
+    expect(rotated.isCurrentCiphertext(stored)).toBe(false);
+    const reencrypted = rotated.encryptSecret(rotated.decryptSecret(stored));
+    expect(rotated.isCurrentCiphertext(reencrypted)).toBe(true);
+    // Without the retired key the old value is unreadable: no silent fallback.
+    const noFallback = await loadWith(NEW_KEY);
+    expect(() => noFallback.decryptSecret(stored)).toThrow();
   });
 });

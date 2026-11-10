@@ -5,12 +5,18 @@ import { withLeaderLock } from '../lib/leaderLock.js';
 import { logger } from '../lib/logger.js';
 import { increment } from '../observability/metrics.js';
 import { ensureQuotaState } from './quotaRecovery.js';
-import { deliveryDelay, emailQueue } from '../queues/emailQueue.js';
+import {
+  deliveryDelay,
+  drainSearchOutbox,
+  emailQueue,
+  queueHorizon,
+} from '../queues/emailQueue.js';
 
 export interface RecoverySummary {
   staleProcessing: number;
   restoredJobs: number;
   scanned: number;
+  searchOutboxDrained: number;
 }
 
 const PAGE = 500;
@@ -21,9 +27,14 @@ const STATE_BATCH = 50;
  *
  *  - PROCESSING rows with an expired lease go back to SCHEDULED and are failed
  *    as 'outcome unknown' on their next claim (never resent);
- *  - every SCHEDULED row must have a live job (waiting, delayed, active);
- *    a missing or terminal job is recreated with the email ID as job ID.
+ *  - every SCHEDULED row due inside the queue horizon must have a live job
+ *    (waiting, delayed, active); a missing or terminal job is recreated with the
+ *    email ID as job ID. This is also how far-future emails enter the queue.
+ *  - search-sync work parked in the outbox while Redis was down is published.
  *
+ * Cost is bounded by the horizon: rows beyond it are not read at all (they are
+ * found through the `status, scheduledAt` index only when they come into
+ * range), so the scan does not grow with how far ahead people schedule.
  * Runs at startup and periodically, never as a cron job, and only on one
  * process at a time thanks to the leader lock.
  */
@@ -40,12 +51,13 @@ export async function reconcileDeliveryQueue(now = new Date()): Promise<Recovery
   });
   if (stale.count) increment('lease_reclaims_total', stale.count);
 
+  const horizon = queueHorizon(now.getTime());
   let cursor: string | undefined;
   let restoredJobs = 0;
   let scanned = 0;
   for (;;) {
     const rows = await prisma.email.findMany({
-      where: { status: 'SCHEDULED' },
+      where: { status: 'SCHEDULED', scheduledAt: { lte: horizon } },
       select: { id: true, scheduledAt: true },
       orderBy: { id: 'asc' },
       take: PAGE,
@@ -73,7 +85,11 @@ export async function reconcileDeliveryQueue(now = new Date()): Promise<Recovery
     if (rows.length < PAGE) break;
   }
   if (restoredJobs) increment('jobs_restored_total', restoredJobs);
-  return { staleProcessing: stale.count, restoredJobs, scanned };
+  const searchOutboxDrained = await drainSearchOutbox().catch((error) => {
+    logger.warn({ event: 'search.outbox_drain_failed', err: error });
+    return 0;
+  });
+  return { staleProcessing: stale.count, restoredJobs, scanned, searchOutboxDrained };
 }
 
 /** Fleet-safe wrapper: replicas that lose the lock skip this round. */
@@ -91,4 +107,17 @@ export async function reconcileOnce(): Promise<RecoverySummary | null> {
   }
   logger.info({ event: 'recovery.completed', ...outcome.result });
   return outcome.result;
+}
+
+/**
+ * Starts the periodic reconcile. Both the API and the worker call this, so
+ * recovery keeps running when only one of them is up. The leader lock makes
+ * extra callers skip a round, so running it in every process is safe.
+ */
+export function startReconcileLoop(): () => void {
+  const timer = setInterval(() => {
+    void reconcileOnce().catch((error) => logger.error({ event: 'recovery.failed', err: error }));
+  }, env.RECONCILE_INTERVAL_MS);
+  timer.unref();
+  return () => clearInterval(timer);
 }

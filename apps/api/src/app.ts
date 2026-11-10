@@ -21,6 +21,9 @@ import attachmentRoutes from './routes/attachments.js';
 import authRoutes from './routes/auth.js';
 import campaignRoutes from './routes/campaigns.js';
 import emailRoutes from './routes/emails.js';
+import senderRoutes from './routes/senders.js';
+import suppressionRoutes from './routes/suppressions.js';
+import unsubscribeRoutes from './routes/unsubscribe.js';
 
 /** Builds the HTTP application without binding a port, so tests can mount it. */
 export function createApp() {
@@ -121,19 +124,28 @@ export function createApp() {
     redisRateLimit({ bucket: 'attachments', limit: 60, windowMs: 60_000, subject: perUser }),
     attachmentRoutes,
   );
-  // Addresses this user has sent from, for the compose "From" picker.
-  app.get(
+  app.use(
     '/api/senders',
     requireAuth,
-    asyncHandler(async (req, res) => {
-      const senders = await prisma.sender.findMany({
-        where: { userId: req.userId! },
-        select: { email: true, displayName: true },
-        orderBy: { createdAt: 'asc' },
-        take: 50,
-      });
-      res.json({ items: senders });
+    redisRateLimit({ bucket: 'senders', limit: 60, windowMs: 60_000, subject: perUser }),
+    senderRoutes,
+  );
+  app.use(
+    '/api/suppressions',
+    requireAuth,
+    redisRateLimit({ bucket: 'suppressions', limit: 120, windowMs: 60_000, subject: perUser }),
+    suppressionRoutes,
+  );
+  // Public: the signed token in the URL is the credential.
+  app.use(
+    '/unsubscribe',
+    redisRateLimit({
+      bucket: 'unsubscribe',
+      limit: 60,
+      windowMs: 60_000,
+      subject: (req) => req.ip ?? 'ip',
     }),
+    unsubscribeRoutes,
   );
   // Effective delivery policy, so the dashboard shows real limits, not marketing copy.
   app.get('/api/settings', requireAuth, (_req, res) => {
