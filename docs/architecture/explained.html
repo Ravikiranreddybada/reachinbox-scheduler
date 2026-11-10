@@ -1,0 +1,1141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ReachInbox Explained</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --card: #fff;
+        --ink: #16181d;
+        --mute: #5b6270;
+        --line: #d9dde4;
+        --acc: #2563eb;
+        --ok: #15803d;
+        --warn: #b45309;
+        --bad: #b91c1c;
+        --code: #eef0f4;
+        --n-web: #dbeafe;
+        --n-api: #e0e7ff;
+        --n-db: #dcfce7;
+        --n-redis: #fee2e2;
+        --n-work: #fef3c7;
+        --n-ext: #f3e8ff;
+        --n-es: #cffafe;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1115;
+          --card: #171a21;
+          --ink: #e8eaee;
+          --mute: #9aa3b2;
+          --line: #2a2f3a;
+          --acc: #6ea0ff;
+          --ok: #4ade80;
+          --warn: #fbbf24;
+          --bad: #f87171;
+          --code: #222732;
+          --n-web: #1e3a5f;
+          --n-api: #2b3170;
+          --n-db: #14452a;
+          --n-redis: #5b1f1f;
+          --n-work: #5a4310;
+          --n-ext: #42235e;
+          --n-es: #134e5a;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          16px/1.6 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 0 16px 80px;
+      }
+      header {
+        padding: 40px 0 8px;
+      }
+      h1 {
+        font-size: 2rem;
+        margin: 0 0 6px;
+      }
+      h2 {
+        font-size: 1.4rem;
+        margin: 48px 0 12px;
+        padding-top: 8px;
+        border-top: 2px solid var(--line);
+      }
+      h3 {
+        font-size: 1.05rem;
+        margin: 22px 0 6px;
+      }
+      p {
+        margin: 8px 0;
+      }
+      .lead {
+        color: var(--mute);
+        max-width: 80ch;
+      }
+      nav {
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+        z-index: 5;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        font-size: 0.85rem;
+      }
+      nav a {
+        color: var(--ink);
+        text-decoration: none;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        background: var(--card);
+      }
+      nav a:hover {
+        border-color: var(--acc);
+        color: var(--acc);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin: 12px 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      code {
+        background: var(--code);
+        padding: 1px 6px;
+        border-radius: 5px;
+        font:
+          0.88em ui-monospace,
+          Menlo,
+          monospace;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.92rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        background: var(--code);
+        font-weight: 600;
+      }
+      .tbl {
+        overflow-x: auto;
+      }
+      .tag {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 1px 8px;
+        border-radius: 99px;
+        color: #fff;
+        vertical-align: middle;
+      }
+      .hi {
+        background: var(--bad);
+      }
+      .md {
+        background: var(--warn);
+      }
+      .lo {
+        background: #64748b;
+      }
+      .ok {
+        background: var(--ok);
+      }
+      svg {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      svg text {
+        fill: var(--ink);
+        font:
+          13px system-ui,
+          sans-serif;
+      }
+      svg .t {
+        font-weight: 700;
+        font-size: 14px;
+      }
+      svg .s {
+        fill: var(--mute);
+        font-size: 11.5px;
+      }
+      svg .box {
+        stroke: var(--line);
+        stroke-width: 1.5;
+      }
+      svg .ln {
+        stroke: var(--ink);
+        stroke-width: 1.6;
+        fill: none;
+        marker-end: url(#ar);
+      }
+      svg .dl {
+        stroke: var(--mute);
+        stroke-width: 1.5;
+        fill: none;
+        stroke-dasharray: 5 4;
+        marker-end: url(#ar);
+      }
+      svg .num {
+        fill: var(--acc);
+        font-weight: 800;
+        font-size: 13px;
+      }
+      .verdict {
+        border-left: 5px solid var(--ok);
+      }
+      .warnbox {
+        border-left: 5px solid var(--warn);
+      }
+      ol.steps {
+        padding-left: 22px;
+      }
+      ol.steps li {
+        margin: 6px 0;
+      }
+      .mute {
+        color: var(--mute);
+      }
+      .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 760px) {
+        .two {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>ReachInbox Scheduler, explained</h1>
+        <p class="lead">
+          Plain-English tour of the whole repo: what it solves, how it works, why each choice was
+          made, what breaks at 1,000,000 users, and what to say in the demo.
+        </p>
+      </header>
+      <nav>
+        <a href="#verdict">0 Verdict</a><a href="#what">1 What it is</a
+        ><a href="#diagram">2 Diagram</a><a href="#flow">3 Life of an email</a
+        ><a href="#decisions">4 Why these choices</a><a href="#fail">5 Crash safety</a
+        ><a href="#scale">6 1M users</a><a href="#flaws">7 Flaws</a><a href="#demo">8 Demo script</a
+        ><a href="#qa">9 Likely questions</a>
+      </nav>
+
+      <h2 id="verdict">0. Is the repo built? Short answer</h2>
+      <div class="card verdict">
+        <p>
+          <b>Yes. Every requirement in the brief is built</b> (API, Postgres, BullMQ delayed jobs,
+          no cron, Ethereal SMTP, multiple senders, rate limit, concurrency, Elasticsearch search,
+          Bull Board, Google login, Slack OAuth + live alert, Next.js dashboard, README). The status
+          table in <code>docs/project/assignment-brief.md</code> says each item was verified on 10
+          Nov 2026, including a real kill -9 restart test.
+        </p>
+        <p>
+          <b>Not done, and only you can do them:</b> record the demo video (max 5 min), add
+          <b>Mitrajit</b> and <b>Yadav036</b> as repo collaborators, submit the ClickUp form.
+        </p>
+        <p class="mute">
+          I read the code. I did not re-run tests or the stack (needs Docker + credentials). Test
+          files exist for gate, worker, routes, recovery, crypto.
+        </p>
+      </div>
+      <div class="card warnbox">
+        <p>
+          <b>Honest framing for the interviewer:</b> this is a very strong
+          <i>single-region, laptop-to-small-fleet</i> design. It is <b>not</b> a 1M-user design as
+          written. Section 6 shows what changes. Say this first. It shows maturity.
+        </p>
+      </div>
+
+      <h2 id="what">1. What problem does it solve?</h2>
+      <div class="card">
+        <p>
+          Think of Gmail "Send later" plus a cold-email tool. A user writes one email, uploads a
+          list of 5,000 addresses, and says: "Start at 9:00, send one every 2 minutes, max 200 per
+          hour." The system must send each email <b>at the right time</b>, <b>never twice</b>,
+          <b>never lose one if a server crashes</b>, and <b>never send faster than the limits</b>.
+        </p>
+        <p>
+          That is hard because servers crash, many workers run at once, and "send an email" cannot
+          be undone. The design is about three guarantees:
+        </p>
+        <div class="grid">
+          <div class="card">
+            <b>1. Not lost</b>
+            <p>Postgres stores every email before anything else happens.</p>
+          </div>
+          <div class="card">
+            <b>2. Not duplicated</b>
+            <p>Idempotency key, row claim, Redis receipt, stable Message-ID.</p>
+          </div>
+          <div class="card">
+            <b>3. Not too fast</b>
+            <p>Redis Lua script reserves a send slot and counts hourly quota.</p>
+          </div>
+        </div>
+        <h3>Tech parts in one line each</h3>
+        <div class="tbl">
+          <table>
+            <tr>
+              <th>Part</th>
+              <th>Job</th>
+              <th>Where</th>
+            </tr>
+            <tr>
+              <td>Next.js / React / Tailwind</td>
+              <td>
+                Login, Compose, Scheduled list, Sent list, email view, search, Slack card, live
+                updates
+              </td>
+              <td><code>apps/web</code></td>
+            </tr>
+            <tr>
+              <td>Express API</td>
+              <td>
+                Auth, validate, save campaign + emails, publish jobs, list/search, SSE, health,
+                metrics, Bull Board
+              </td>
+              <td><code>apps/api/src/app.ts, routes/</code></td>
+            </tr>
+            <tr>
+              <td>Worker process</td>
+              <td>Takes due jobs, checks limits, sends via SMTP, marks SENT</td>
+              <td><code>apps/api/src/worker.ts, workers/emailWorker.ts</code></td>
+            </tr>
+            <tr>
+              <td>PostgreSQL (Prisma)</td>
+              <td>
+                <b>Source of truth</b>: users, senders, campaigns, emails, attachments, Slack
+                connection
+              </td>
+              <td><code>prisma/schema.prisma</code></td>
+            </tr>
+            <tr>
+              <td>Redis + BullMQ</td>
+              <td>
+                Delayed jobs, Lua rate counters, receipts, leader lock, pub/sub, HTTP rate limit,
+                JWT deny-list
+              </td>
+              <td><code>queues/, services/deliveryGate.ts</code></td>
+            </tr>
+            <tr>
+              <td>Elasticsearch</td>
+              <td>Fuzzy search over recipient, subject, body. Rebuildable copy.</td>
+              <td><code>services/search.ts</code></td>
+            </tr>
+            <tr>
+              <td>Ethereal SMTP</td>
+              <td>Fake inbox. Mail goes nowhere real; you get a preview URL.</td>
+              <td>nodemailer in worker</td>
+            </tr>
+            <tr>
+              <td>Slack OAuth</td>
+              <td>Message when hourly limit hits</td>
+              <td><code>services/notifications.ts</code></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <h2 id="diagram">2. Architecture diagram</h2>
+      <div class="card">
+        <svg viewBox="0 0 1200 600" role="img" aria-label="ReachInbox architecture">
+          <defs>
+            <marker
+              id="ar"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 0L10 5L0 10z" fill="currentColor" style="color: var(--ink)" />
+            </marker>
+          </defs>
+
+          <rect class="box" x="20" y="240" width="150" height="100" rx="10" fill="var(--n-web)" />
+          <text class="t" x="95" y="272" text-anchor="middle">Browser</text>
+          <text class="s" x="95" y="292" text-anchor="middle">Next.js dashboard</text>
+          <text class="s" x="95" y="308" text-anchor="middle">:3000</text>
+
+          <rect class="box" x="260" y="240" width="170" height="110" rx="10" fill="var(--n-api)" />
+          <text class="t" x="345" y="268" text-anchor="middle">Express API :4000</text>
+          <text class="s" x="345" y="288" text-anchor="middle">auth, validate, plan</text>
+          <text class="s" x="345" y="304" text-anchor="middle">list, search, SSE</text>
+          <text class="s" x="345" y="320" text-anchor="middle">Bull Board, /metrics</text>
+
+          <rect class="box" x="260" y="40" width="170" height="70" rx="10" fill="var(--n-ext)" />
+          <text class="t" x="345" y="68" text-anchor="middle">Google OAuth</text>
+          <text class="s" x="345" y="88" text-anchor="middle">login, ID token</text>
+
+          <rect class="box" x="520" y="40" width="190" height="90" rx="10" fill="var(--n-db)" />
+          <text class="t" x="615" y="68" text-anchor="middle">PostgreSQL</text>
+          <text class="s" x="615" y="88" text-anchor="middle">SOURCE OF TRUTH</text>
+          <text class="s" x="615" y="104" text-anchor="middle">campaign, email, sender</text>
+
+          <rect
+            class="box"
+            x="520"
+            y="230"
+            width="190"
+            height="130"
+            rx="10"
+            fill="var(--n-redis)"
+          />
+          <text class="t" x="615" y="258" text-anchor="middle">Redis (AOF on)</text>
+          <text class="s" x="615" y="278" text-anchor="middle">BullMQ delayed jobs</text>
+          <text class="s" x="615" y="294" text-anchor="middle">Lua: slot + quotas</text>
+          <text class="s" x="615" y="310" text-anchor="middle">receipts, leader lock</text>
+          <text class="s" x="615" y="326" text-anchor="middle">pub/sub, HTTP limits</text>
+
+          <rect class="box" x="790" y="230" width="180" height="130" rx="10" fill="var(--n-work)" />
+          <text class="t" x="880" y="258" text-anchor="middle">Worker(s)</text>
+          <text class="s" x="880" y="278" text-anchor="middle">email-delivery queue</text>
+          <text class="s" x="880" y="294" text-anchor="middle">search-sync queue</text>
+          <text class="s" x="880" y="310" text-anchor="middle">concurrency = env</text>
+          <text class="s" x="880" y="326" text-anchor="middle">scale with replicas</text>
+
+          <rect class="box" x="1030" y="60" width="150" height="80" rx="10" fill="var(--n-ext)" />
+          <text class="t" x="1105" y="90" text-anchor="middle">Ethereal SMTP</text>
+          <text class="s" x="1105" y="110" text-anchor="middle">fake inbox</text>
+
+          <rect class="box" x="1030" y="250" width="150" height="80" rx="10" fill="var(--n-ext)" />
+          <text class="t" x="1105" y="280" text-anchor="middle">Slack</text>
+          <text class="s" x="1105" y="300" text-anchor="middle">limit-reached alert</text>
+
+          <rect class="box" x="1030" y="440" width="150" height="80" rx="10" fill="var(--n-es)" />
+          <text class="t" x="1105" y="470" text-anchor="middle">Elasticsearch</text>
+          <text class="s" x="1105" y="490" text-anchor="middle">search copy</text>
+
+          <rect
+            class="box"
+            x="400"
+            y="460"
+            width="260"
+            height="90"
+            rx="10"
+            fill="var(--n-api)"
+            stroke-dasharray="6 4"
+          />
+          <text class="t" x="530" y="488" text-anchor="middle">Reconciler (no cron)</text>
+          <text class="s" x="530" y="508" text-anchor="middle">
+            setInterval + Redis leader lock
+          </text>
+          <text class="s" x="530" y="524" text-anchor="middle">
+            every SCHEDULED row must have a job
+          </text>
+
+          <path class="ln" d="M170 280 L260 280" />
+          <text class="num" x="196" y="270">1</text>
+          <path class="dl" d="M260 320 L170 320" />
+          <text class="s" x="188" y="336">SSE</text>
+          <path class="ln" d="M345 240 L345 110" />
+          <text class="s" x="352" y="180">login</text>
+          <path class="ln" d="M430 262 L470 262 L470 85 L520 85" />
+          <text class="num" x="476" y="170">2</text>
+          <path class="ln" d="M430 300 L520 300" />
+          <text class="num" x="470" y="292">3</text>
+          <path class="ln" d="M710 295 L790 295" />
+          <text class="num" x="742" y="286">4</text>
+          <path class="ln" d="M850 230 L850 85 L710 85" />
+          <text class="num" x="858" y="160">5</text>
+          <path class="ln" d="M800 360 L800 400 L640 400 L640 360" />
+          <text class="num" x="716" y="392">6</text>
+          <path class="ln" d="M970 250 L1000 250 L1000 100 L1030 100" />
+          <text class="num" x="1006" y="180">7</text>
+          <path class="ln" d="M970 295 L1030 295" />
+          <text class="num" x="996" y="286">8</text>
+          <path class="ln" d="M940 360 L940 480 L1030 480" />
+          <text class="num" x="946" y="430">9</text>
+          <path class="ln" d="M560 460 L560 360" />
+          <text class="s" x="566" y="415">re-add</text>
+
+          <text class="s" x="20" y="580">
+            Solid = request/command. Dashed = push. Reconciler also reads Postgres (not drawn,
+            avoids clutter).
+          </text>
+        </svg>
+        <ol class="steps">
+          <li>
+            <b>1</b> Browser sends <code>POST /api/emails</code> with sender, recipients, subject,
+            body, start time, delay, hourly limit, idempotency key.
+          </li>
+          <li><b>2</b> API saves campaign + all email rows in <b>one DB transaction</b>.</li>
+          <li>
+            <b>3</b> Only after commit, API adds one BullMQ delayed job per email. Job ID = email
+            ID.
+          </li>
+          <li><b>4</b> When a job is due, a worker takes it from Redis.</li>
+          <li>
+            <b>5</b> Worker claims the row in Postgres (compare-and-set) and later writes SENT.
+          </li>
+          <li>
+            <b>6</b> Worker asks a Redis Lua script: "which slot may I send in, is quota left?"
+            Writes receipt after SMTP.
+          </li>
+          <li><b>7</b> Worker sends via Ethereal SMTP.</li>
+          <li><b>8</b> If a limit is hit, worker posts to Slack (once per hour per scope).</li>
+          <li>
+            <b>9</b> Worker queues a search-sync job; another worker bulk-indexes into
+            Elasticsearch.
+          </li>
+        </ol>
+      </div>
+
+      <h2 id="flow">3. Life of one email (step by step)</h2>
+      <div class="two">
+        <div class="card">
+          <h3>A. Schedule (API)</h3>
+          <ol class="steps">
+            <li>Zod validates. Max 5,000 recipients, body &le; 100 KB.</li>
+            <li>Body is HTML-sanitized.</li>
+            <li>
+              <code>buildSchedulePlan</code>: lowercases + de-dupes recipients; email <i>i</i> gets
+              <code>start + i &times; delay</code>. Hash of payload saved.
+            </li>
+            <li>
+              Same idempotency key + same hash &rarr; return old campaign (200). Different hash
+              &rarr; 409.
+            </li>
+            <li>
+              Transaction: create sender (<code>ON CONFLICT DO NOTHING</code>), campaign, N email
+              rows.
+            </li>
+            <li>
+              After commit: <code>addBulk</code> jobs in chunks of 500 with
+              <code>delay = scheduledAt - now</code>.
+            </li>
+            <li>Queue search-sync job. Return 202.</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>B. Deliver (worker)</h3>
+          <ol class="steps">
+            <li>Load row. If already terminal, stop.</li>
+            <li><b>Receipt check.</b> Redis key says SMTP already accepted? Just mark SENT.</li>
+            <li>
+              <b>Reserve slot</b> (Lua): <code>slot = max(now, lastSlot + 2s)</code>. Count sender,
+              campaign, tenant quota for the hour of that slot. Full &rarr; move job to next hour +
+              jitter and ping Slack.
+            </li>
+            <li>Sleep (BullMQ <code>moveToDelayed</code>) until slot.</li>
+            <li><b>Start guard</b> (Lua): real starts of one sender &ge; 2 s apart.</li>
+            <li>
+              <b>Claim</b>: <code>UPDATE ... SET PROCESSING WHERE SCHEDULED</code> (or stale lease).
+              One winner.
+            </li>
+            <li>Send with stable <code>Message-ID: &lt;emailId@reachinbox.local&gt;</code>.</li>
+            <li>Write Redis receipt, then Postgres SENT, publish SSE event, queue search sync.</li>
+            <li>
+              SMTP error &rarr; back to SCHEDULED, BullMQ retries (5x exponential), then FAILED.
+            </li>
+          </ol>
+        </div>
+      </div>
+      <div class="card">
+        <h3>C. Restart survival</h3>
+        <p>
+          Jobs live in Redis (AOF every second) <b>and</b> as rows in Postgres. On boot, and every 5
+          min, one process (leader lock) scans all <code>SCHEDULED</code> rows. Any row with no live
+          job gets a new job with the same ID. Any <code>PROCESSING</code> row older than the 5 min
+          lease goes back to <code>SCHEDULED</code>. So even if Redis is wiped, nothing is lost.
+        </p>
+        <p class="mute">
+          This is <code>setInterval</code>, not cron. Scheduling itself is BullMQ delayed jobs. The
+          reconciler is only a safety net. Say that clearly in the demo.
+        </p>
+      </div>
+
+      <h2 id="decisions">4. Why each decision was made</h2>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Decision</th>
+            <th>Why</th>
+            <th>Trade-off</th>
+          </tr>
+          <tr>
+            <td>Postgres is truth, Redis is an index (ADR 0001)</td>
+            <td>Redis can lose ~1 s of writes or be flushed. A DB row cannot be "forgotten".</td>
+            <td>Two stores to keep in sync, so a reconciler is needed.</td>
+          </tr>
+          <tr>
+            <td>Commit rows <i>before</i> publishing jobs</td>
+            <td>
+              Crash between the two is repairable. The reverse order could send an email with no
+              record.
+            </td>
+            <td>Brief window where a row has no job (reconciler/retry fixes).</td>
+          </tr>
+          <tr>
+            <td>Job ID = email ID</td>
+            <td>Publishing twice is a no-op. Makes every retry safe.</td>
+            <td>None meaningful.</td>
+          </tr>
+          <tr>
+            <td>Client idempotency key + payload hash</td>
+            <td>Double-click or network retry never makes a second campaign.</td>
+            <td>Client must generate keys.</td>
+          </tr>
+          <tr>
+            <td>Reserve send slots in Lua (ADR 0002)</td>
+            <td>
+              Old design: poll "can I send?" &rarr; O(n&sup2;) wakeups for 5,000 due emails, and
+              BullMQ's global limiter capped the <i>whole system</i>. Reservation = one atomic call,
+              job sleeps till its slot.
+            </td>
+            <td>Failed sends still burn quota. Redis is on the hot path.</td>
+          </tr>
+          <tr>
+            <td>Quota charged to hour of the <i>slot</i></td>
+            <td>Hour boundary can't let one hour exceed the cap.</td>
+            <td>Now a sliding window (Redis sorted sets).</td>
+          </tr>
+          <tr>
+            <td>15-minute look-ahead horizon</td>
+            <td>A cancelled campaign cannot hold slots hours into the future.</td>
+            <td>Jobs far back wake every ~15 min.</td>
+          </tr>
+          <tr>
+            <td>Over-limit &rarr; next hour, not fail</td>
+            <td>Brief says never drop or fail. Jitter (up to 60 s) avoids a thundering herd.</td>
+            <td>Order within the hour is approximate.</td>
+          </tr>
+          <tr>
+            <td>Claim via compare-and-set + lease</td>
+            <td>Two workers can't both own an email. Dead worker's lease expires.</td>
+            <td>Lease length = recovery delay.</td>
+          </tr>
+          <tr>
+            <td>Receipt in Redis before DB (ADR 0003)</td>
+            <td>
+              SMTP has no idempotency. If DB fails after sending, retry sees receipt and doesn't
+              resend.
+            </td>
+            <td>Tiny duplicate window remains. At-least-once, not exactly-once.</td>
+          </tr>
+          <tr>
+            <td>Search is async projection (ADR 0004)</td>
+            <td>
+              ES slow/down must not block sending or the API. External version =
+              <code>updatedAt</code> stops stale overwrites.
+            </td>
+            <td>Search lags seconds. Lists come from Postgres.</td>
+          </tr>
+          <tr>
+            <td>Separate API and Worker processes</td>
+            <td>Scale and restart independently. Graceful shutdown waits for in-flight sends.</td>
+            <td>More processes to run.</td>
+          </tr>
+          <tr>
+            <td>SSE (not websockets)</td>
+            <td>One-way live status. Simple. One Redis subscriber per API process.</td>
+            <td>Connection count per node is limited.</td>
+          </tr>
+          <tr>
+            <td>Signed cookie JWT + Redis deny-list</td>
+            <td>Stateless API replicas; logout still revokes immediately.</td>
+            <td>Redis read on each request.</td>
+          </tr>
+          <tr>
+            <td>AES-GCM for Slack tokens</td>
+            <td>Secrets not readable from a DB dump.</td>
+            <td>Key in env (not KMS).</td>
+          </tr>
+        </table>
+      </div>
+
+      <h2 id="fail">5. What happens when things crash</h2>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Event</th>
+            <th>Result</th>
+            <th>Risk</th>
+          </tr>
+          <tr>
+            <td>API dies before DB commit</td>
+            <td>Nothing saved. Client retries with same key.</td>
+            <td><span class="tag ok">none</span></td>
+          </tr>
+          <tr>
+            <td>API dies after commit, before jobs</td>
+            <td>Reconciler (or client retry) adds jobs.</td>
+            <td><span class="tag ok">none</span></td>
+          </tr>
+          <tr>
+            <td>Redis restarts / is wiped</td>
+            <td>
+              AOF restores; else reconciler rebuilds from Postgres. Pace/quota counters reset.
+            </td>
+            <td><span class="tag md">quota counters lost</span></td>
+          </tr>
+          <tr>
+            <td>Worker dies before SMTP</td>
+            <td>BullMQ stall detection (30 s) re-runs.</td>
+            <td><span class="tag ok">none</span></td>
+          </tr>
+          <tr>
+            <td>Worker dies after SMTP, before receipt</td>
+            <td>Lease expires, job re-sends.</td>
+            <td><span class="tag md">possible duplicate</span></td>
+          </tr>
+          <tr>
+            <td>Postgres fails after SMTP</td>
+            <td>Receipt exists; retry only marks SENT.</td>
+            <td><span class="tag ok">none</span></td>
+          </tr>
+          <tr>
+            <td>Two workers get same email</td>
+            <td>CAS: one wins; other waits for lease.</td>
+            <td><span class="tag ok">none</span></td>
+          </tr>
+          <tr>
+            <td>Elasticsearch down</td>
+            <td>Sync retries 8x; <code>/health</code> says degraded; sending continues.</td>
+            <td><span class="tag lo">stale search</span></td>
+          </tr>
+          <tr>
+            <td>Slack down / not connected</td>
+            <td>No crash, no alert, delivery continues.</td>
+            <td><span class="tag lo">alert only</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <h2 id="scale">6. Would it handle 1,000,000 users?</h2>
+      <div class="card warnbox">
+        <p>
+          <b>No, not as built.</b> It is correct and well reasoned, but it has one Postgres, one
+          Redis, one ES node, one SMTP account, and a full-table reconciler.
+        </p>
+      </div>
+      <h3>Assumptions (say them out loud)</h3>
+      <div class="card">
+        <p>
+          1M registered users. 10% active a day. Each active user schedules 500 emails/day &rArr;
+          <b>50M emails/day &asymp; 580/s average, ~5k/s at peak</b>. The repo's own load test:
+          <b>~250/s</b> on a laptop with 4 workers and a stub transport. With real SMTP, each sender
+          is capped by <code>MIN_SEND_INTERVAL_MS</code> (2 s &rarr; 0.5/s) and 200/h.
+        </p>
+      </div>
+      <h3>What breaks first, in order</h3>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>#</th>
+            <th>Bottleneck</th>
+            <th>Why</th>
+            <th>Fix</th>
+          </tr>
+          <tr>
+            <td>1</td>
+            <td>Reconciler full scan</td>
+            <td>
+              Reads <i>every</i> SCHEDULED row, then <code>getJobState</code> per row = hundreds of
+              millions of Redis calls every 5 min. ADR 0001 admits this.
+            </td>
+            <td>
+              Scan only rows due soon via <code>(status, scheduledAt)</code>; or drop per-email jobs
+              (see #2).
+            </td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>One BullMQ job per email in one Redis</td>
+            <td>
+              50M delayed jobs &times; ~1 KB = ~50 GB RAM in one Redis. Completed-job history adds
+              more.
+            </td>
+            <td>
+              <b>Just-in-time dispatch:</b> emails live only in Postgres. A dispatcher pulls rows
+              due in the next ~1 min with <code>FOR UPDATE SKIP LOCKED</code> and enqueues only
+              those.
+            </td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>Single Postgres</td>
+            <td>
+              5,000 rows with a 100 KB body copied into each = up to 500 MB per campaign. One
+              primary. <code>groupBy</code> stats scan per user.
+            </td>
+            <td>
+              Store body once on campaign. Partition <code>email</code>. PgBouncer. Read replicas.
+              Cached counters.
+            </td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>Attachments in Postgres <code>Bytes</code></td>
+            <td>Worker loads up to 10&times;5 MB from DB <i>per email</i>.</td>
+            <td>Object storage; fetch once per campaign.</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>Single Redis for everything</td>
+            <td>Queues, Lua counters, rate limits, receipts, pub/sub share one CPU thread.</td>
+            <td>
+              Shard Redis by tenant (Lua already uses a <code>{tenantId}</code> hash tag). Split
+              pub/sub and HTTP limits out.
+            </td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td>One SMTP account; "From" is free text</td>
+            <td>
+              All senders share one Ethereal login. No per-sender credentials, DKIM/SPF, bounces,
+              warm-up.
+            </td>
+            <td>Per-sender credentials or SES/SendGrid. Bounce + complaint webhooks.</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td>SSE on API nodes</td>
+            <td>
+              Each node holds sockets; every event is fanned to every node's pattern subscriber.
+            </td>
+            <td>Dedicated realtime gateway.</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td>Elasticsearch single node</td>
+            <td>Indexes full body of every email.</td>
+            <td>Multi-node cluster, ILM, fed by outbox + Kafka.</td>
+          </tr>
+          <tr>
+            <td>9</td>
+            <td>Noisy neighbour</td>
+            <td>One tenant's 5,000 jobs share queue and workers with everyone.</td>
+            <td>Per-tenant queues, weighted fair scheduling.</td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>Target design for 1M users</h3>
+      <div class="card">
+        <svg viewBox="0 0 1180 330" role="img" aria-label="Target architecture">
+          <rect class="box" x="10" y="120" width="110" height="70" rx="8" fill="var(--n-web)" />
+          <text class="t" x="65" y="150" text-anchor="middle">Clients</text>
+          <text class="s" x="65" y="168" text-anchor="middle">CDN + LB</text>
+          <rect class="box" x="160" y="120" width="130" height="70" rx="8" fill="var(--n-api)" />
+          <text class="t" x="225" y="150" text-anchor="middle">API pods</text>
+          <text class="s" x="225" y="168" text-anchor="middle">stateless, autoscale</text>
+          <rect class="box" x="340" y="30" width="170" height="80" rx="8" fill="var(--n-db)" />
+          <text class="t" x="425" y="58" text-anchor="middle">Postgres shards</text>
+          <text class="s" x="425" y="76" text-anchor="middle">partitioned by time</text>
+          <text class="s" x="425" y="92" text-anchor="middle">+ replicas + outbox</text>
+          <rect class="box" x="340" y="200" width="170" height="80" rx="8" fill="var(--n-ext)" />
+          <text class="t" x="425" y="228" text-anchor="middle">Object storage</text>
+          <text class="s" x="425" y="246" text-anchor="middle">bodies, attachments</text>
+          <rect class="box" x="560" y="30" width="160" height="80" rx="8" fill="var(--n-work)" />
+          <text class="t" x="640" y="58" text-anchor="middle">Dispatchers</text>
+          <text class="s" x="640" y="76" text-anchor="middle">SKIP LOCKED, due &lt; 1 min</text>
+          <text class="s" x="640" y="92" text-anchor="middle">replaces reconciler scan</text>
+          <rect class="box" x="560" y="130" width="160" height="80" rx="8" fill="var(--n-redis)" />
+          <text class="t" x="640" y="158" text-anchor="middle">Redis shards</text>
+          <text class="s" x="640" y="176" text-anchor="middle">per-tenant queues</text>
+          <text class="s" x="640" y="192" text-anchor="middle">Lua quotas, receipts</text>
+          <rect class="box" x="770" y="130" width="150" height="80" rx="8" fill="var(--n-work)" />
+          <text class="t" x="845" y="158" text-anchor="middle">Worker fleet</text>
+          <text class="s" x="845" y="176" text-anchor="middle">autoscale on queue lag</text>
+          <rect class="box" x="970" y="40" width="190" height="80" rx="8" fill="var(--n-ext)" />
+          <text class="t" x="1065" y="68" text-anchor="middle">SMTP / SES pool</text>
+          <text class="s" x="1065" y="86" text-anchor="middle">per-sender creds, DKIM</text>
+          <text class="s" x="1065" y="102" text-anchor="middle">bounce webhooks</text>
+          <rect class="box" x="970" y="150" width="190" height="70" rx="8" fill="var(--n-es)" />
+          <text class="t" x="1065" y="178" text-anchor="middle">Kafka &rarr; Elasticsearch</text>
+          <text class="s" x="1065" y="196" text-anchor="middle">outbox fed</text>
+          <rect class="box" x="970" y="240" width="190" height="60" rx="8" fill="var(--n-web)" />
+          <text class="t" x="1065" y="268" text-anchor="middle">Realtime gateway</text>
+          <text class="s" x="1065" y="286" text-anchor="middle">SSE / WS fan-out</text>
+          <path class="ln" d="M120 155 L160 155" />
+          <path class="ln" d="M290 140 L340 80" />
+          <path class="ln" d="M290 170 L340 235" />
+          <path class="ln" d="M510 70 L560 70" />
+          <path class="ln" d="M640 110 L640 130" />
+          <path class="ln" d="M720 170 L770 170" />
+          <path class="ln" d="M920 150 L970 90" />
+          <path class="ln" d="M920 180 L970 185" />
+          <path class="ln" d="M920 195 L970 265" />
+        </svg>
+        <ol class="steps">
+          <li>
+            <b>Schedule:</b> API writes campaign (body once) + slim recipient rows + outbox event.
+            No Redis call at request time.
+          </li>
+          <li>
+            <b>Dispatch:</b> dispatchers claim rows due soon (<code>SKIP LOCKED</code>) and push to
+            per-tenant queues. Redis stays small. Restart safety comes from Postgres being the only
+            schedule.
+          </li>
+          <li>
+            <b>Admit:</b> keep the Lua slot-reservation idea (good and cluster-safe). Move from
+            fixed hour windows to a token bucket / sliding window.
+          </li>
+          <li>
+            <b>Send:</b> per-sender SMTP creds or provider; bounce/complaint handling stops bad
+            sends.
+          </li>
+          <li>
+            <b>Project:</b> search and live updates fed from the DB outbox via Kafka, not request
+            paths.
+          </li>
+          <li>
+            <b>Operate:</b> autoscale workers on "oldest ready job age" (metric already exists),
+            multi-AZ, per-tenant fairness.
+          </li>
+        </ol>
+        <p class="mute">
+          Most current ideas survive: Postgres as truth, idempotent job IDs, CAS claim, receipts,
+          Lua reservation, async search. The change is <i>where the schedule lives</i> (Postgres,
+          not millions of Redis delayed jobs) and sharding.
+        </p>
+      </div>
+
+      <h2 id="flaws">7. Flaws and gaps (honest list)</h2>
+      <p class="mute">
+        Ranked. Per your project rules, I am not suggesting production work for the submission. This
+        is so you can answer questions.
+      </p>
+      <div class="tbl">
+        <table>
+          <tr>
+            <th>Sev</th>
+            <th>Flaw</th>
+            <th>Where</th>
+            <th>Detail</th>
+          </tr>
+          <tr>
+            <td><span class="tag hi">HIGH</span></td>
+            <td>Reconciler is O(all scheduled rows)</td>
+            <td><code>services/recovery.ts</code></td>
+            <td>
+              Pages through every SCHEDULED row and calls <code>getJobState</code> for each, every 5
+              min. Fine for thousands, breaks at millions.
+            </td>
+          </tr>
+          <tr>
+            <td><span class="tag hi">HIGH</span></td>
+            <td>One BullMQ delayed job per email</td>
+            <td><code>queues/emailQueue.ts</code></td>
+            <td>
+              Redis memory grows with emails scheduled in advance. Redis is the scale ceiling.
+            </td>
+          </tr>
+          <tr>
+            <td><span class="tag hi">HIGH</span></td>
+            <td>"Multiple senders" share one SMTP login</td>
+            <td><code>emailWorker.ts</code></td>
+            <td>
+              Sender is only the From address; auth is one Ethereal user. Meets the assignment (fake
+              SMTP) but is not real multi-account sending.
+            </td>
+          </tr>
+          <tr>
+            <td><span class="tag md">MED</span></td>
+            <td>Body copied into every email row</td>
+            <td><code>routes/emails.ts</code></td>
+            <td>
+              5,000 rows &times; up to 100 KB. Heavy transaction and storage. List queries also
+              select <code>body</code> to build a preview.
+            </td>
+          </tr>
+          <tr>
+            <td><span class="tag md">MED</span></td>
+            <td>Attachments in Postgres, reloaded per send</td>
+            <td>schema, worker</td>
+            <td>Up to 5 MB each loaded from DB for every recipient.</td>
+          </tr>
+          <tr>
+            <td><span class="tag md">MED</span></td>
+            <td>No bounce / complaint / unsubscribe handling</td>
+            <td>-</td>
+            <td>Out of brief scope, but a real cold-email product needs it.</td>
+          </tr>
+          <tr>
+            <td><span class="tag lo">LOW</span></td>
+            <td>Reconciler timer lives in API only</td>
+            <td><code>server.ts</code></td>
+            <td>If no API runs, only the worker's start-up reconcile runs.</td>
+          </tr>
+          <tr>
+            <td><span class="tag lo">LOW</span></td>
+            <td>Encryption key falls back to SESSION_SECRET</td>
+            <td><code>config/env.ts</code></td>
+            <td>Fine locally. No KMS or rotation.</td>
+          </tr>
+          <tr>
+            <td><span class="tag lo">LOW</span></td>
+            <td>ES: no security, single node</td>
+            <td>docker-compose</td>
+            <td>Local demo setting.</td>
+          </tr>
+          <tr>
+            <td><span class="tag lo">LOW</span></td>
+            <td>SSE per node, no replay</td>
+            <td><code>events/stream.ts</code></td>
+            <td>Events missed during a disconnect are not replayed; list refetch covers it.</td>
+          </tr>
+          <tr>
+            <td><span class="tag lo">LOW</span></td>
+            <td>Search can miss docs</td>
+            <td>ADR 0004</td>
+            <td>
+              If Redis is down at enqueue time, the doc is not indexed.
+              <code>pnpm reindex</code> repairs. No outbox yet.
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <h2 id="demo">8. Demo script (5 minutes max)</h2>
+      <div class="card">
+        <ol class="steps">
+          <li>
+            <b>0:00</b> One sentence: "Scheduler that never loses or duplicates an email, and
+            respects rate limits across workers." Show the diagram.
+          </li>
+          <li><b>0:30</b> Google login. Point at name, email, avatar in header.</li>
+          <li>
+            <b>1:00</b> Compose: upload CSV, show detected count, set start time, delay, hourly
+            limit. Schedule.
+          </li>
+          <li>
+            <b>1:45</b> Scheduled tab fills; Sent tab fills live (SSE). Open an email, show the
+            Ethereal preview URL.
+          </li>
+          <li>
+            <b>2:15</b> Search a typo (e.g. "restrt") and find the email. Say "Elasticsearch,
+            fuzzy".
+          </li>
+          <li>
+            <b>2:45</b> Open <code>/admin/queues</code> (Bull Board): delayed jobs are future
+            emails. Say "delayed jobs, no cron".
+          </li>
+          <li>
+            <b>3:15</b> <b>Restart test:</b> schedule 3 emails 1 min out. Kill API + worker. Start
+            again. They still send on time, attempts = 1.
+          </li>
+          <li>
+            <b>4:00</b> Set a low hourly cap, schedule more than the cap. Slack message arrives. Say
+            "the rest move to the next hour, none dropped".
+          </li>
+          <li>
+            <b>4:40</b> Close: "Postgres is truth, Redis runs the clock, a reconciler heals gaps.
+            Known limit: millions of users needs just-in-time dispatch and sharding."
+          </li>
+        </ol>
+      </div>
+
+      <h2 id="qa">9. Likely interview questions, short answers</h2>
+      <div class="grid">
+        <div class="card">
+          <b>Why not cron?</b>
+          <p>
+            Brief forbids it. BullMQ stores the run time in Redis; workers wake when due. The
+            reconciler uses <code>setInterval</code> only to repair gaps.
+          </p>
+        </div>
+        <div class="card">
+          <b>How do you avoid duplicates?</b>
+          <p>
+            Four layers: idempotency key at API, job ID = email ID, CAS claim in Postgres, Redis
+            receipt after SMTP. SMTP cannot be exactly-once; say so.
+          </p>
+        </div>
+        <div class="card">
+          <b>What if Redis dies?</b>
+          <p>
+            Schedules are in Postgres. Reconciler recreates jobs. Quota counters reset (known gap).
+          </p>
+        </div>
+        <div class="card">
+          <b>Why Lua?</b>
+          <p>
+            Read-check-increment must be atomic across many workers. A Lua script runs as one step
+            in Redis.
+          </p>
+        </div>
+        <div class="card">
+          <b>Why reserve slots, not retry?</b>
+          <p>
+            5,000 due emails: retry = every job wakes every 2 s. Reserve = each job gets its time
+            once and sleeps.
+          </p>
+        </div>
+        <div class="card">
+          <b>What if the limit is hit?</b>
+          <p>
+            Job moves to next hour (+ up to 60 s jitter). Never fails, never dropped. Slack alert
+            once per hour per scope.
+          </p>
+        </div>
+        <div class="card">
+          <b>1000 emails at once?</b>
+          <p>
+            All become jobs. Reservation spreads them 2 s apart per sender, capped 200/hour; the
+            rest roll to later hours. 8 workers run in parallel safely.
+          </p>
+        </div>
+        <div class="card">
+          <b>Slack not connected?</b>
+          <p>
+            Lookup finds no connection and returns. No crash. Connect later and it works with no
+            redeploy.
+          </p>
+        </div>
+        <div class="card">
+          <b>Does it scale to 1M?</b>
+          <p>
+            Not as is. Keep the schedule only in Postgres with a dispatcher, shard Redis and
+            Postgres, use object storage, real SMTP per sender, outbox + Kafka for search. Core
+            ideas stay.
+          </p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,7 +1,7 @@
 import { DelayedError, type Job, Worker } from 'bullmq';
 import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
-import { claimEmail, isTerminal } from '../domain/delivery.js';
+import { ABANDONED_MESSAGE, claimEmail, isTerminal } from '../domain/delivery.js';
 import { publishEvent } from '../events/publisher.js';
 import { htmlToText, sanitizeEmailHtml } from '../lib/html.js';
 import { prisma, redis } from '../lib/infra.js';
@@ -14,7 +14,12 @@ import {
   enqueueSearchSync,
   SEARCH_SYNC_QUEUE,
 } from '../queues/emailQueue.js';
-import { acquireSendStart, reserveSendSlot, withJitter } from '../services/deliveryGate.js';
+import {
+  acquireSendStart,
+  releaseQuota,
+  reserveSendSlot,
+  withJitter,
+} from '../services/deliveryGate.js';
 import { notifyQuotaReached } from '../services/notifications.js';
 import { syncEmailsById } from '../services/search.js';
 
@@ -136,6 +141,7 @@ export async function processDelivery(
       userId: email.userId,
       senderId: email.senderId,
       campaignId: email.campaignId,
+      emailId: email.id,
       campaignHourlyLimit: email.campaign.hourlyLimit,
       now,
     });
@@ -172,6 +178,20 @@ export async function processDelivery(
   // 3. Claim the row with compare-and-set; only one worker can win it.
   const claim = await claimEmail(email.id, new Date(), env.PROCESSING_LEASE_MS);
   if (claim.kind === 'terminal') return;
+  if (claim.kind === 'abandoned') {
+    // Quota stays charged: the message may really have been sent.
+    increment('emails_abandoned_total');
+    publishEvent(email.userId, {
+      type: 'email.status',
+      emailId: email.id,
+      campaignId: email.campaignId,
+      status: 'FAILED',
+      at: new Date().toISOString(),
+    });
+    syncSearch(email.id);
+    logger.error({ event: 'email.abandoned', emailId: email.id, reason: ABANDONED_MESSAGE });
+    return;
+  }
   if (claim.kind === 'held') {
     // Another worker holds a live lease; wait for it to finish or expire.
     return delayUntil(job, token, claim.leaseExpiresAt + 1_000);
@@ -211,6 +231,9 @@ export async function processDelivery(
       where: { id: email.id },
       data: { status, processingStartedAt: null, errorMessage: message },
     });
+    // The failed attempt did not send anything, so it gives its quota back.
+    // A retry re-reserves with the same email ID, so there is no double charge.
+    await releaseQuota([{ ...email, emailId: email.id }]).catch(() => undefined);
     increment(finalAttempt ? 'emails_failed_total' : 'emails_retried_total');
     publishEvent(email.userId, {
       type: 'email.status',

@@ -32,6 +32,7 @@ Object.assign(process.env, {
   WORKER_CONCURRENCY: values.concurrency,
   MIN_SEND_INTERVAL_MS: values.interval,
   MAX_EMAILS_PER_HOUR_PER_SENDER: String(total),
+  MAX_EMAILS_PER_HOUR_PER_TENANT: String(total * 2),
   MAX_EMAILS_PER_HOUR_GLOBAL: String(total * 2),
 });
 

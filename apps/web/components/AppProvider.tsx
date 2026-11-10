@@ -118,7 +118,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   if (fatal) {
     return (
-      <div className="empty" role="alert" style={{ minHeight: '100dvh' }}>
+      <div className="empty" role="alert" style={{ minHeight: 'calc(100dvh / 0.9)' }}>
         <strong>Can’t reach the server</strong>
         <span>{fatal}</span>
         <button className="btn" onClick={() => location.reload()}>

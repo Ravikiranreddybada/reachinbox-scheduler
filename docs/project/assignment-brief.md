@@ -118,24 +118,26 @@ Match the Figma as closely as possible. Talk to own backend APIs.
 
 Fill in as work is verified. Audited against the repo on 10 Nov 2026.
 
-| Item                                                          | Status                                                                                         |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| API schedule + Postgres store                                 | verified 10 Nov 2026 (real stack)                                                              |
-| BullMQ delayed jobs, no cron                                  | verified 10 Nov 2026 (jobs use delay; no cron libs; reconciler uses setInterval + leader lock) |
-| Ethereal SMTP, multiple senders                               | verified 10 Nov 2026 (sent via worker)                                                         |
-| Restart persistence                                           | verified 10 Nov 2026 twice (kill -9 API+worker; future emails sent on time, attempts=1)        |
-| Idempotency                                                   | covered by integration tests                                                                   |
-| Worker concurrency (env)                                      | verified 10 Nov 2026 (WORKER_CONCURRENCY, default 8; 37 integration tests pass)                |
-| Min delay between sends (documented)                          | verified 10 Nov 2026 (MIN_SEND_INTERVAL_MS=2000, in README config table)                       |
-| Hourly cap per sender, Redis counters, next-window reschedule | verified 10 Nov 2026 (Lua counters; integration tests; live Slack alert)                       |
-| Elasticsearch indexing + search                               | verified 10 Nov 2026 (index = Postgres; fuzzy "restrt" finds "Restart demo" in UI)             |
-| Live BullMQ dashboard                                         | verified 10 Nov 2026 (/admin/queues shows email-delivery, search-sync; 403 for non-admin)      |
-| Google OAuth + profile + logout                               | verified 10 Nov 2026 (real Google login, dashboard redirect, name+avatar+email, logout)        |
-| Slack OAuth + live rate-limit message + disconnect/reconnect  | verified 10 Nov 2026 (check Slack channel once)                                                |
-| Compose form (CSV/text, count, start, delay, cap)             | verified in browser 10 Nov 2026                                                                |
-| Scheduled + Sent tables with loading/empty/error              | verified in browser 10 Nov 2026                                                                |
-| Matches Figma                                                 | verified 10 Nov 2026 (compose, Send Later, lists); login page matches                          |
-| README (run, Ethereal, architecture, features, trade-offs)    | done 10 Nov 2026 (added Features done + Assumptions)                                           |
-| Demo video                                                    | todo (owner: you)                                                                              |
-| Private repo + access for Mitrajit, Yadav036                  | repo is private; add collaborators (owner: you)                                                |
-| ClickUp form submitted                                        | todo (owner: you)                                                                              |
+| Item                                                                                            | Status                                                                                         |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| API schedule + Postgres store                                                                   | verified 10 Nov 2026 (real stack)                                                              |
+| BullMQ delayed jobs, no cron                                                                    | verified 10 Nov 2026 (jobs use delay; no cron libs; reconciler uses setInterval + leader lock) |
+| Ethereal SMTP, multiple senders                                                                 | verified 10 Nov 2026 (sent via worker)                                                         |
+| Restart persistence                                                                             | verified 10 Nov 2026 twice (kill -9 API+worker; future emails sent on time, attempts=1)        |
+| Idempotency                                                                                     | covered by integration tests                                                                   |
+| Worker concurrency (env)                                                                        | verified 10 Nov 2026 (WORKER_CONCURRENCY, default 8; 37 integration tests pass)                |
+| Min delay between sends (documented)                                                            | verified 10 Nov 2026 (MIN_SEND_INTERVAL_MS=2000, in README config table)                       |
+| Hourly cap per sender, Redis counters, next-window reschedule                                   | verified 10 Nov 2026 (Lua counters; integration tests; live Slack alert)                       |
+| Elasticsearch indexing + search                                                                 | verified 10 Nov 2026 (index = Postgres; fuzzy "restrt" finds "Restart demo" in UI)             |
+| Live BullMQ dashboard                                                                           | verified 10 Nov 2026 (/admin/queues shows email-delivery, search-sync; 403 for non-admin)      |
+| Google OAuth + profile + logout                                                                 | verified 10 Nov 2026 (real Google login, dashboard redirect, name+avatar+email, logout)        |
+| Slack OAuth + live rate-limit message + disconnect/reconnect                                    | verified 10 Nov 2026 (check Slack channel once)                                                |
+| Compose form (CSV/text, count, start, delay, cap)                                               | verified in browser 10 Nov 2026                                                                |
+| Scheduled + Sent tables with loading/empty/error                                                | verified in browser 10 Nov 2026                                                                |
+| Matches Figma                                                                                   | verified 10 Nov 2026 (compose, Send Later, lists); login page matches                          |
+| Repository verification (format, unit + integration tests, typecheck, builds, Prisma schema)    | verified 10 Nov 2026 (`pnpm verify`, `pnpm test:integration`, `prisma validate`)               |
+| Quota hardening (sliding window, refund, Redis-loss rebuild, global cap, no resend after crash) | verified 10 Nov 2026 (77 tests pass: 34 unit, 43 integration on real Redis + Postgres)         |
+| README (run, Ethereal, architecture, features, trade-offs)                                      | done 10 Nov 2026 (added Features done + Assumptions)                                           |
+| Demo video                                                                                      | todo (owner: you)                                                                              |
+| Private repo + access for Mitrajit, Yadav036                                                    | repo is private; add collaborators (owner: you)                                                |
+| ClickUp form submitted                                                                          | todo (owner: you)                                                                              |

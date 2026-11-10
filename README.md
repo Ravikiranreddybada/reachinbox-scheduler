@@ -6,18 +6,18 @@ The design goal is simple to state and hard to get right: **an accepted email is
 
 ## Highlights
 
-| Concern               | How it is solved                                                                                                                                                                                                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Durability            | Campaign and recipients commit in one transaction before any job exists. BullMQ jobs use the email ID as job ID. A leader-elected reconciler re-creates any job that Redis lost (no cron).                                                                                                                   |
-| Idempotent API        | Client key + SHA-256 of the canonical payload. Same key and payload → original result (`replayed: true`); same key, new payload → `409`. 10 concurrent identical requests create one campaign (tested).                                                                                                      |
-| No double processing  | Workers claim a row with a compare-and-set `UPDATE … WHERE status = 'SCHEDULED'`; exactly one of 25 concurrent claimers wins (tested). Expired leases are reclaimable.                                                                                                                                       |
-| Crash after SMTP send | A Redis delivery receipt is written the moment SMTP accepts. A retry finds it and only finishes bookkeeping, so a database blip cannot cause a second email. A stable `Message-ID` lets receivers drop the rare remaining duplicate.                                                                         |
-| Pacing and quotas     | One Redis Lua script **reserves a send slot**: `slot = max(now, last + interval)`, then charges sender, campaign, and tenant hourly counters in the hour where the slot falls. O(1) Redis calls per email, no polling storms. Over-quota jobs move to the next UTC hour (with jitter) and are never dropped. |
-| Scale-out             | Stateless API, any number of workers. All coordination (quotas, pacing, HTTP rate limits, session revocation, reconciliation lock, live events) lives in Redis. Keys carry a `{tenant}` hash tag, so the Lua scripts stay valid on Redis Cluster.                                                            |
-| Search                | Versioned index behind an alias (`emails` → `emails-v2`), e-mail-aware analyzer, prefix search, fuzzy match, highlights. Writes go through a retrying `search-sync` queue using `updatedAt` as an external version, so out-of-order updates can never leave a stale status.                                  |
-| Live dashboard        | Workers publish status changes on Redis pub/sub; each API replica fans them out over Server-Sent Events.                                                                                                                                                                                                     |
-| Security              | Google OAuth (verified email only) with signed state + nonce; JWT sessions with a Redis deny-list for instant logout; Slack webhook and token encrypted with AES-256-GCM; Origin + Fetch-Metadata CSRF checks; tenant filter on every query.                                                                 |
-| Operations            | Structured pino logs with request IDs, `/health` (dependency latencies), `/health/live`, Prometheus `/metrics` (queue depth, oldest-job age, sends, deferrals, prevented duplicates, lease reclaims), Bull Board for operators, graceful shutdown with a deadline.                                           |
+| Concern               | How it is solved                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Durability            | Campaign and recipients commit in one transaction before any job exists. BullMQ jobs use the email ID as job ID. A leader-elected reconciler re-creates any job that Redis lost (no cron).                                                                                                                                           |
+| Idempotent API        | Client key + SHA-256 of the canonical payload. Same key and payload → original result (`replayed: true`); same key, new payload → `409`. 10 concurrent identical requests create one campaign (tested).                                                                                                                              |
+| No double processing  | Workers claim a row with a compare-and-set `UPDATE … WHERE status = 'SCHEDULED'`; exactly one of 25 concurrent claimers wins (tested). Expired leases are reclaimable.                                                                                                                                                               |
+| Crash after SMTP send | A Redis delivery receipt is written the moment SMTP accepts. A retry finds it and only finishes bookkeeping, so a database blip cannot cause a second email. A stable `Message-ID` lets receivers drop the rare remaining duplicate.                                                                                                 |
+| Pacing and quotas     | One Redis Lua script **reserves a send slot**: `slot = max(now, last + interval)`, then charges sender, campaign, tenant, and global sliding-hour quotas at that slot. O(1) Redis calls per email, no polling storms. Over-quota jobs wait until the oldest counted send leaves the hour window (with jitter) and are never dropped. |
+| Scale-out             | Stateless API, any number of workers. All coordination (quotas, pacing, HTTP rate limits, session revocation, reconciliation lock, live events) lives in Redis. Keys carry a `{tenant}` hash tag, so the Lua scripts stay valid on Redis Cluster.                                                                                    |
+| Search                | Versioned index behind an alias (`emails` → `emails-v2`), e-mail-aware analyzer, prefix search, fuzzy match, highlights. Writes go through a retrying `search-sync` queue using `updatedAt` as an external version, so out-of-order updates can never leave a stale status.                                                          |
+| Live dashboard        | Workers publish status changes on Redis pub/sub; each API replica fans them out over Server-Sent Events.                                                                                                                                                                                                                             |
+| Security              | Google OAuth (verified email only) with signed state + nonce; JWT sessions with a Redis deny-list for instant logout; Slack webhook and token encrypted with AES-256-GCM; Origin + Fetch-Metadata CSRF checks; tenant filter on every query.                                                                                         |
+| Operations            | Structured pino logs with request IDs, `/health` (dependency latencies), `/health/live`, Prometheus `/metrics` (queue depth, oldest-job age, sends, deferrals, prevented duplicates, lease reclaims), Bull Board for operators, graceful shutdown with a deadline.                                                                   |
 
 ## Architecture
 
@@ -46,7 +46,7 @@ API commit ─► job delayed until scheduledAt
                        │ no
                        ▼
               reserve slot (Lua: pacing + 3 hourly quotas)
-                 ├─ quota full ─► delay to next UTC hour (+jitter), Slack alert once per hour
+                 ├─ quota full ─► delay until the oldest send leaves the 1-hour window (+jitter), Slack alert once per hour
                  ├─ slot later ─► delay until slot (quota already charged)
                  ▼
               start guard (real send starts ≥ interval apart)
@@ -77,7 +77,7 @@ Throughput scales with the number of senders, because spacing is per sender, not
 - BullMQ delayed jobs on Redis (no cron); the reconciler rebuilds lost jobs after a restart.
 - Several senders through Ethereal SMTP; per-sender spacing (`MIN_SEND_INTERVAL_MS`, default 2 s).
 - Worker concurrency from `WORKER_CONCURRENCY`; single-winner claims, no duplicate sends.
-- Hourly caps per sender, per campaign and per tenant in Redis; overflow moves to the next hour, nothing is dropped.
+- Hourly caps per sender, per campaign and per tenant in Redis; overflow waits for the sliding window to free up, nothing is dropped.
 - Slack OAuth connect/disconnect and a live message when a limit is reached.
 - Elasticsearch search over scheduled and sent emails; Bull Board at `/admin/queues`.
 
@@ -120,21 +120,21 @@ Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000
 
 ## Configuration
 
-| Variable                                                               | Purpose                                                                                       |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`                       | Infrastructure endpoints                                                                      |
-| `SESSION_SECRET`                                                       | ≥ 32 characters; signs sessions and OAuth state (placeholder rejected in production)          |
-| `DATA_ENCRYPTION_KEY`                                                  | Optional base64 32-byte key for Slack secrets at rest; derived from `SESSION_SECRET` if unset |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`      | Google OAuth web client (callback `http://localhost:4000/auth/google/callback`)               |
-| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`         | Slack app with the `incoming-webhook` scope                                                   |
-| `ETHEREAL_HOST`, `ETHEREAL_PORT`, `ETHEREAL_USER`, `ETHEREAL_PASSWORD` | SMTP; the worker verifies them at startup and refuses to start if they are wrong              |
-| `DELIVERY_TRANSPORT`                                                   | `smtp` (default) or `stream` (in-process stub for load tests)                                 |
-| `WORKER_CONCURRENCY`                                                   | Jobs in flight per worker process (1–100)                                                     |
-| `MIN_SEND_INTERVAL_MS`                                                 | Minimum time between two sends **from the same sender**, across all workers (default 2000)    |
-| `MAX_EMAILS_PER_HOUR_PER_SENDER`, `MAX_EMAILS_PER_HOUR_GLOBAL`         | Hourly caps per sender and per tenant; a campaign may add its own lower cap                   |
-| `PROCESSING_LEASE_MS`, `RECONCILE_INTERVAL_MS`                         | Lease after which a stuck send is reclaimed; reconciliation period                            |
-| `BULL_BOARD_ADMIN_EMAILS`, `METRICS_TOKEN`                             | Operator access to Bull Board; bearer token for `/metrics`                                    |
-| `WEB_ORIGIN`, `API_PORT`, `LOG_LEVEL`                                  | Browser origin, port, log level                                                               |
+| Variable                                                                                         | Purpose                                                                                                    |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`                                                 | Infrastructure endpoints                                                                                   |
+| `SESSION_SECRET`                                                                                 | ≥ 32 characters; signs sessions and OAuth state (placeholder rejected in production)                       |
+| `DATA_ENCRYPTION_KEY`                                                                            | Optional base64 32-byte key for Slack secrets at rest; derived from `SESSION_SECRET` if unset              |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`                                | Google OAuth web client (callback `http://localhost:4000/auth/google/callback`)                            |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI`                                   | Slack app with the `incoming-webhook` scope                                                                |
+| `ETHEREAL_HOST`, `ETHEREAL_PORT`, `ETHEREAL_USER`, `ETHEREAL_PASSWORD`                           | SMTP; the worker verifies them at startup and refuses to start if they are wrong                           |
+| `DELIVERY_TRANSPORT`                                                                             | `smtp` (default) or `stream` (in-process stub for load tests)                                              |
+| `WORKER_CONCURRENCY`                                                                             | Jobs in flight per worker process (1–100)                                                                  |
+| `MIN_SEND_INTERVAL_MS`                                                                           | Minimum time between two sends **from the same sender**, across all workers (default 2000)                 |
+| `MAX_EMAILS_PER_HOUR_PER_SENDER`, `MAX_EMAILS_PER_HOUR_PER_TENANT`, `MAX_EMAILS_PER_HOUR_GLOBAL` | Sliding one-hour caps per sender, per tenant, and across all tenants; a campaign may add its own lower cap |
+| `PROCESSING_LEASE_MS`, `RECONCILE_INTERVAL_MS`                                                   | Lease after which a stuck send is reclaimed; reconciliation period                                         |
+| `BULL_BOARD_ADMIN_EMAILS`, `METRICS_TOKEN`                                                       | Operator access to Bull Board; bearer token for `/metrics`                                                 |
+| `WEB_ORIGIN`, `API_PORT`, `LOG_LEVEL`                                                            | Browser origin, port, log level                                                                            |
 
 ## API
 
@@ -168,8 +168,10 @@ The integration suite proves, against real PostgreSQL and Redis: exactly-cap adm
 
 ## Trade-offs, stated plainly
 
-- **SMTP is at-least-once.** SMTP has no idempotency key. If a process dies after the server accepts a message and before the receipt is written (a window of one Redis call), the email can be sent again. The stable `Message-ID` header lets receiving systems drop it. Exactly-once delivery to a third party is not possible; the design keeps the window as small as it can be and makes it observable.
-- **Quotas are charged at reservation.** A reserved slot whose send then fails still counts towards the hour, the same way a provider counts the attempt.
+- **A crash mid-send fails the email; it is never resent.** SMTP has no idempotency key. If a worker dies after claiming an email, the system cannot know if SMTP accepted it. The claim marker (`processingStartedAt`) stays in PostgreSQL, so the next attempt marks the row `FAILED` ("outcome unknown") instead of sending a possible duplicate. Cost: one email may need a manual resend. A known SMTP error still retries normally. A Redis receipt also covers a PostgreSQL blip after SMTP accepted.
+- **Hourly caps are a sliding window.** Each quota is a Redis sorted set of send times, so no 60-minute span holds more than the cap, also across a clock-hour boundary. Cancelled emails and known SMTP failures give their quota back. A crash-abandoned email keeps it (it may have been sent).
+- **Redis loss does not reset the caps.** If the quota marker is missing, the worker (at start) and the reconciler (every tick) rebuild the sets from emails sent in the last hour in PostgreSQL. Only slots reserved but not yet used are lost; those jobs re-reserve when they run.
+- **Three scopes plus a global cap.** `MAX_EMAILS_PER_HOUR_PER_TENANT` is per workspace; `MAX_EMAILS_PER_HOUR_GLOBAL` is one counter for all tenants. The global key is not in a tenant hash tag, so it assumes a single Redis node (the local demo).
 - **Pacing is per sender.** Reservations look ahead at most 15 minutes, so a cancelled campaign can delay the next campaign of the same sender by at most that much.
 - **Redis is the execution index, not the truth.** With AOF `everysec`, a Redis crash can lose one second of queue writes; the reconciler rebuilds those jobs from PostgreSQL.
 

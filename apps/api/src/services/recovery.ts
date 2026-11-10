@@ -4,6 +4,7 @@ import { prisma } from '../lib/infra.js';
 import { withLeaderLock } from '../lib/leaderLock.js';
 import { logger } from '../lib/logger.js';
 import { increment } from '../observability/metrics.js';
+import { ensureQuotaState } from './quotaRecovery.js';
 import { deliveryDelay, emailQueue } from '../queues/emailQueue.js';
 
 export interface RecoverySummary {
@@ -18,7 +19,8 @@ const STATE_BATCH = 50;
 /**
  * Reconciles BullMQ with PostgreSQL, which is the source of truth:
  *
- *  - PROCESSING rows with an expired lease go back to SCHEDULED;
+ *  - PROCESSING rows with an expired lease go back to SCHEDULED and are failed
+ *    as 'outcome unknown' on their next claim (never resent);
  *  - every SCHEDULED row must have a live job (waiting, delayed, active);
  *    a missing or terminal job is recreated with the email ID as job ID.
  *
@@ -29,9 +31,10 @@ export async function reconcileDeliveryQueue(now = new Date()): Promise<Recovery
   const leaseCutoff = new Date(now.getTime() - env.PROCESSING_LEASE_MS);
   const stale = await prisma.email.updateMany({
     where: { status: 'PROCESSING', processingStartedAt: { lt: leaseCutoff } },
+    // processingStartedAt stays set: it marks "a worker may have sent this",
+    // so the next claim fails the row instead of sending a possible duplicate.
     data: {
       status: 'SCHEDULED',
-      processingStartedAt: null,
       errorMessage: 'Recovered after an expired processing lease.',
     },
   });
@@ -75,7 +78,13 @@ export async function reconcileDeliveryQueue(now = new Date()): Promise<Recovery
 
 /** Fleet-safe wrapper: replicas that lose the lock skip this round. */
 export async function reconcileOnce(): Promise<RecoverySummary | null> {
-  const outcome = await withLeaderLock('reconcile', 10 * 60_000, () => reconcileDeliveryQueue());
+  const outcome = await withLeaderLock('reconcile', 10 * 60_000, async () => {
+    // Redis may have been wiped since the last tick: rebuild hourly quotas first.
+    await ensureQuotaState().catch((error) =>
+      logger.error({ event: 'quota.rebuild_failed', err: error }),
+    );
+    return reconcileDeliveryQueue();
+  });
   if (!outcome.ran) {
     logger.debug({ event: 'recovery.skipped', reason: 'another process holds the lock' });
     return null;

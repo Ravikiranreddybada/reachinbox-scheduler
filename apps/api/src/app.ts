@@ -140,7 +140,8 @@ export function createApp() {
     res.json({
       minSendIntervalMs: env.MIN_SEND_INTERVAL_MS,
       maxEmailsPerHourPerSender: env.MAX_EMAILS_PER_HOUR_PER_SENDER,
-      maxEmailsPerHourPerWorkspace: env.MAX_EMAILS_PER_HOUR_GLOBAL,
+      maxEmailsPerHourPerWorkspace: env.MAX_EMAILS_PER_HOUR_PER_TENANT,
+      maxEmailsPerHourGlobal: env.MAX_EMAILS_PER_HOUR_GLOBAL,
       workerConcurrency: env.WORKER_CONCURRENCY,
       maxAttempts: 5,
       deliveryTransport: env.DELIVERY_TRANSPORT,

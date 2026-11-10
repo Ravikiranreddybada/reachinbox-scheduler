@@ -41,14 +41,15 @@ If `ri:receipt:{emailId}` exists, SMTP already accepted this email. The worker o
 
 ### 2. Slot reservation (pacing + quotas in one atomic step)
 
-A Lua script computes `slot = max(now, lastSlot[sender] + MIN_SEND_INTERVAL_MS)` and checks three counters for the UTC hour in which `slot` falls: sender, campaign, tenant. If all have room, it increments all three and stores the slot; otherwise it returns the start of the next hour and the scope that is full.
+A Lua script computes `slot = max(now, lastSlot[sender] + MIN_SEND_INTERVAL_MS)` and checks four sliding one-hour quotas (sorted sets of send times): sender, campaign, tenant, global. If all have room, it adds the email ID to all four and stores the slot; otherwise it returns the time the oldest blocking send leaves the window and the scope that is full.
 
 Why reserve instead of check-and-retry: with 5,000 emails due at once for one sender, check-and-retry wakes every job every interval (O(n²) Redis calls). A reservation gives each job its exact slot in one call; the job sleeps in BullMQ until then and sends without asking again.
 
-- Quotas are charged to the hour of the slot, not the hour of the request, so an hour boundary never lets an hour exceed its cap.
+- Quotas are charged at the slot, not the request time, and the window slides, so no 60-minute span exceeds a cap (also across a clock-hour boundary). Cancelled emails and known SMTP failures release their entry; a re-reserve of the same email ID never double-charges.
+- If Redis loses the quota sets, `ensureQuotaState` rebuilds them from emails sent in the last hour in PostgreSQL (at worker start and on every reconcile tick).
 - Reservations look ahead at most 15 minutes. A job further back in line is deferred to the horizon edge without reserving. This bounds how far a cancelled campaign can push the next one.
-- All keys in one script share the `{tenantId}` hash tag and are declared in `KEYS` (both the current and next hour), so the script is valid on Redis Cluster.
-- A full hour moves the job to the next hour plus up to 60 s of jitter, so thousands of deferred jobs do not wake in the same millisecond. One Slack alert per tenant, scope, and hour is sent through a `SET NX` gate, outside the job's critical path and with a 5 s timeout.
+- All keys are declared in `KEYS`. The tenant keys share a `{tenantId}` hash tag; the global key does not, so the script assumes one Redis node (the local demo).
+- A full window delays the job until it opens, plus up to 60 s of jitter, so thousands of deferred jobs do not wake in the same millisecond. One Slack alert per tenant, scope, and hour is sent through a `SET NX` gate, outside the job's critical path and with a 5 s timeout.
 
 ### 3. Start guard
 

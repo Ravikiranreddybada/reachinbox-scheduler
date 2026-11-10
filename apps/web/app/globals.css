@@ -26,6 +26,10 @@
 * {
   box-sizing: border-box;
 }
+html {
+  --ui-zoom: 0.9;
+  zoom: var(--ui-zoom);
+}
 html,
 body {
   margin: 0;
@@ -170,7 +174,7 @@ a {
 
 /* ---------- Login ---------- */
 .login-page {
-  min-height: 100dvh;
+  min-height: calc(100dvh / var(--ui-zoom));
   display: grid;
   place-items: center;
   padding: 24px 16px;
@@ -260,13 +264,13 @@ a {
 .shell {
   display: grid;
   grid-template-columns: 284px minmax(0, 1fr);
-  min-height: 100dvh;
+  min-height: calc(100dvh / var(--ui-zoom));
 }
 .sidebar {
   padding: 22px 10px 24px 10px;
   position: sticky;
   top: 0;
-  height: 100dvh;
+  height: calc(100dvh / var(--ui-zoom));
   display: flex;
   flex-direction: column;
 }
@@ -578,7 +582,7 @@ a {
 /* ---------- Page header (detail + compose) ---------- */
 .page {
   position: relative;
-  min-height: 100dvh;
+  min-height: calc(100dvh / var(--ui-zoom));
   padding: 0 24px 56px 22px;
 }
 .page-head {

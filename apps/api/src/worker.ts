@@ -3,6 +3,7 @@ import { elastic, prisma, redis } from './lib/infra.js';
 import { installShutdown } from './lib/lifecycle.js';
 import { logger } from './lib/logger.js';
 import { emailQueue, searchSyncQueue } from './queues/emailQueue.js';
+import { ensureQuotaState } from './services/quotaRecovery.js';
 import { reconcileOnce } from './services/recovery.js';
 import { ensureSearchIndex } from './services/search.js';
 import {
@@ -33,6 +34,8 @@ async function start() {
       logger.warn({ event: 'search.startup_degraded', err: error });
       return false;
     });
+  // Hourly quotas live in Redis; rebuild them from PostgreSQL if Redis restarted empty.
+  await ensureQuotaState();
   const recovery = await reconcileOnce();
   void delivery.run();
   void searchSync.run();

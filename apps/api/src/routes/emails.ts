@@ -10,6 +10,7 @@ import { prisma } from '../lib/infra.js';
 import { logger } from '../lib/logger.js';
 import { increment } from '../observability/metrics.js';
 import { emailQueue, enqueueDeliveries, enqueueSearchSync } from '../queues/emailQueue.js';
+import { releaseQuota } from '../services/deliveryGate.js';
 import { searchEmails } from '../services/search.js';
 
 const router = Router();
@@ -361,7 +362,7 @@ router.delete(
     const userId = req.userId!;
     const email = await prisma.email.findFirst({
       where: { id, userId, deletedAt: null },
-      select: { status: true, campaignId: true },
+      select: { status: true, campaignId: true, senderId: true },
     });
     if (!email) throw new HttpError(404, 'Email not found');
     if (email.status === 'PROCESSING') {
@@ -376,6 +377,9 @@ router.delete(
         throw new HttpError(409, 'This email was just picked up for sending. Try again.');
       }
       await emailQueue.remove(id).catch(() => 0);
+      await releaseQuota([
+        { userId, senderId: email.senderId, campaignId: email.campaignId, emailId: id },
+      ]).catch(() => undefined);
       increment('emails_cancelled_total');
     }
     await prisma.email.update({ where: { id }, data: { deletedAt: new Date() } });
@@ -417,8 +421,11 @@ router.post(
     await emailQueue.remove(id).catch(() => 0);
     const email = await prisma.email.findUniqueOrThrow({
       where: { id },
-      select: { campaignId: true },
+      select: { campaignId: true, senderId: true },
     });
+    await releaseQuota([
+      { userId, senderId: email.senderId, campaignId: email.campaignId, emailId: id },
+    ]).catch(() => undefined);
     increment('emails_cancelled_total');
     publishEvent(userId, {
       type: 'email.status',

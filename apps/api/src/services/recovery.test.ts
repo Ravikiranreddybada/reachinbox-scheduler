@@ -14,6 +14,7 @@ vi.mock('../lib/infra.js', () => ({
   prisma: { email: { updateMany: mocks.updateMany, findMany: mocks.findMany } },
 }));
 vi.mock('../lib/logger.js', () => ({ logger: { info: vi.fn(), debug: vi.fn() } }));
+vi.mock('./quotaRecovery.js', () => ({ ensureQuotaState: vi.fn() }));
 vi.mock('../lib/leaderLock.js', () => ({ withLeaderLock: vi.fn() }));
 vi.mock('../observability/metrics.js', () => ({ increment: vi.fn() }));
 vi.mock('../queues/emailQueue.js', () => ({

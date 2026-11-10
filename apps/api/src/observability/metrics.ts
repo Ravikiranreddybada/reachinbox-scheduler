@@ -10,6 +10,8 @@ const PREFIX = 'ri:metrics:';
 export type Counter =
   | 'emails_sent_total'
   | 'emails_failed_total'
+  | 'emails_abandoned_total'
+  | 'quota_rebuilds_total'
   | 'emails_retried_total'
   | 'emails_cancelled_total'
   | 'quota_deferrals_total'

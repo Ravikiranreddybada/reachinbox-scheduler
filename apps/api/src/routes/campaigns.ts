@@ -7,6 +7,7 @@ import { prisma } from '../lib/infra.js';
 import { logger } from '../lib/logger.js';
 import { increment } from '../observability/metrics.js';
 import { emailQueue, enqueueSearchSync } from '../queues/emailQueue.js';
+import { releaseQuota } from '../services/deliveryGate.js';
 
 const router = Router();
 const idParam = z.object({ id: z.string().cuid() });
@@ -105,7 +106,7 @@ router.post(
 
     const targets = await prisma.email.findMany({
       where: { campaignId: id, userId, status: 'SCHEDULED' },
-      select: { id: true },
+      select: { id: true, senderId: true },
     });
     const ids = targets.map((row) => row.id);
     const result = await prisma.email.updateMany({
@@ -115,6 +116,9 @@ router.post(
     const removals = await Promise.allSettled(ids.map((emailId) => emailQueue.remove(emailId)));
     const inFlight = await prisma.email.count({ where: { campaignId: id, status: 'PROCESSING' } });
 
+    await releaseQuota(
+      targets.map((row) => ({ userId, senderId: row.senderId, campaignId: id, emailId: row.id })),
+    ).catch(() => undefined);
     increment('emails_cancelled_total', result.count);
     publishEvent(userId, { type: 'campaign.cancelled', campaignId: id, count: result.count });
     void enqueueSearchSync(ids).catch(() => undefined);

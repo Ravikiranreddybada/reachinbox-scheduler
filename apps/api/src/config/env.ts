@@ -45,7 +45,8 @@ const schema = z
     /** Minimum spacing between two sends from the same sender, across all workers. */
     MIN_SEND_INTERVAL_MS: z.coerce.number().int().min(0).max(3_600_000).default(2000),
     MAX_EMAILS_PER_HOUR_PER_SENDER: z.coerce.number().int().min(1).default(200),
-    MAX_EMAILS_PER_HOUR_GLOBAL: z.coerce.number().int().min(1).default(5000),
+    MAX_EMAILS_PER_HOUR_PER_TENANT: z.coerce.number().int().min(1).default(5000),
+    MAX_EMAILS_PER_HOUR_GLOBAL: z.coerce.number().int().min(1).default(20000),
     /** A PROCESSING row older than this is presumed abandoned and is reclaimed. */
     PROCESSING_LEASE_MS: z.coerce.number().int().min(60_000).default(300_000),
     RECONCILE_INTERVAL_MS: z.coerce

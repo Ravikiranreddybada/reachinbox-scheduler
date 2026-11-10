@@ -19,13 +19,25 @@ describe('claimEmail (real PostgreSQL)', () => {
     expect(row).toMatchObject({ status: 'PROCESSING', attempts: 1 });
   });
 
-  it('reclaims a PROCESSING row whose lease expired', async () => {
+  it('fails (never resends) a PROCESSING row whose lease expired', async () => {
     const { emails } = await createCampaign(await createTenant(), 1);
     await prisma.email.update({
       where: { id: emails[0]!.id },
       data: { status: 'PROCESSING', processingStartedAt: new Date(Date.now() - 600_000) },
     });
-    expect(await claimEmail(emails[0]!.id, new Date(), 300_000)).toMatchObject({ kind: 'claimed' });
+    expect(await claimEmail(emails[0]!.id, new Date(), 300_000)).toEqual({ kind: 'abandoned' });
+    const row = await prisma.email.findUniqueOrThrow({ where: { id: emails[0]!.id } });
+    expect(row.status).toBe('FAILED');
+  });
+
+  it('fails a SCHEDULED row that a crashed worker had already claimed', async () => {
+    const { emails } = await createCampaign(await createTenant(), 1);
+    // State left by the reconciler: back to SCHEDULED, claim marker kept.
+    await prisma.email.update({
+      where: { id: emails[0]!.id },
+      data: { processingStartedAt: new Date(Date.now() - 600_000) },
+    });
+    expect(await claimEmail(emails[0]!.id, new Date(), 300_000)).toEqual({ kind: 'abandoned' });
   });
 
   it('never claims a terminal email', async () => {

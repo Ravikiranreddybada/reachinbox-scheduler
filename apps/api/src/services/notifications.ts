@@ -18,6 +18,7 @@ const scopeLabel: Record<QuotaScope, string> = {
   sender: 'sender',
   campaign: 'campaign',
   tenant: 'workspace-wide',
+  global: 'global',
 };
 
 /**
@@ -32,7 +33,7 @@ export async function notifyQuotaReached(alert: QuotaAlert): Promise<void> {
       ? alert.senderEmail
       : alert.scope === 'campaign'
         ? alert.campaignId
-        : 'all';
+        : 'all'; // tenant and global share one alert subject per scope
   const onceKey = keys.quotaAlert(alert.userId, alert.scope, subject, alert.window);
   if (!(await redis.set(onceKey, '1', 'EX', 2 * 3600, 'NX'))) return;
 

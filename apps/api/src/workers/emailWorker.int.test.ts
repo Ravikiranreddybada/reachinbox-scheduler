@@ -91,6 +91,24 @@ describe('delivery worker end to end (PostgreSQL + Redis + BullMQ)', () => {
     expect(row.attempts).toBe(0);
   });
 
+  it('does not resend an email whose earlier attempt crashed mid-send', async () => {
+    const { emails } = await createCampaign(await createTenant(), 1);
+    const email = emails[0]!;
+    // A worker claimed it, then died. The reconciler put it back to SCHEDULED.
+    await prisma.email.update({
+      where: { id: email.id },
+      data: { processingStartedAt: new Date(Date.now() - 600_000), attempts: 1 },
+    });
+    await enqueueDeliveries([email]);
+    await waitFor(
+      async () =>
+        (await prisma.email.findUniqueOrThrow({ where: { id: email.id } })).status === 'FAILED',
+    );
+    const row = await prisma.email.findUniqueOrThrow({ where: { id: email.id } });
+    expect(row.attempts).toBe(1);
+    expect(row.providerMessageId).toBeNull();
+  });
+
   it('skips a cancelled email', async () => {
     const { emails } = await createCampaign(await createTenant(), 1);
     await prisma.email.update({ where: { id: emails[0]!.id }, data: { status: 'CANCELLED' } });

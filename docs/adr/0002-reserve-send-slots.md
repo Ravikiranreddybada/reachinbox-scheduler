@@ -10,7 +10,7 @@ The first version used BullMQ's queue-wide limiter (one job per interval for the
 
 ## Decision
 
-One Lua script per email reserves `slot = max(now, lastSlot + interval)` for the sender and charges the sender, campaign, and tenant counters of the UTC hour that contains the slot. The job sleeps until its slot. Reservations look ahead at most 15 minutes. A small start guard at execution time keeps real send starts one interval apart even when timers fire late.
+One Lua script per email reserves `slot = max(now, lastSlot + interval)` for the sender and charges the sender, campaign, tenant, and global quotas. Each quota is a Redis sorted set of send times (email ID as member), so the hourly cap is a sliding window and a cancelled or failed email can give its entry back. After a Redis wipe the sets are rebuilt from PostgreSQL. The job sleeps until its slot. Reservations look ahead at most 15 minutes. A small start guard at execution time keeps real send starts one interval apart even when timers fire late.
 
 ## Consequences
 
