@@ -125,7 +125,7 @@ Fill in as work is verified. Audited against the repo on 10 Nov 2026.
 | Ethereal SMTP, multiple senders                                                                 | verified 10 Nov 2026 (sent via worker)                                                         |
 | Restart persistence                                                                             | verified 10 Nov 2026 twice (kill -9 API+worker; future emails sent on time, attempts=1)        |
 | Idempotency                                                                                     | covered by integration tests                                                                   |
-| Worker concurrency (env)                                                                        | verified 10 Nov 2026 (WORKER_CONCURRENCY, default 8; 37 integration tests pass)                |
+| Worker concurrency (env)                                                                        | verified 10 Nov 2026 (WORKER_CONCURRENCY, default 8; 43 integration tests pass)                |
 | Min delay between sends (documented)                                                            | verified 10 Nov 2026 (MIN_SEND_INTERVAL_MS=2000, in README config table)                       |
 | Hourly cap per sender, Redis counters, next-window reschedule                                   | verified 10 Nov 2026 (Lua counters; integration tests; live Slack alert)                       |
 | Elasticsearch indexing + search                                                                 | verified 10 Nov 2026 (index = Postgres; fuzzy "restrt" finds "Restart demo" in UI)             |
