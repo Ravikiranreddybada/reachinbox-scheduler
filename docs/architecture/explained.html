@@ -382,7 +382,7 @@
 
       <h2 id="diagram">2. Architecture diagram</h2>
       <div class="card">
-        <svg viewBox="0 0 1200 600" role="img" aria-label="ReachInbox architecture">
+        <svg viewBox="0 0 1200 720" role="img" aria-label="ReachInbox architecture">
           <defs>
             <marker
               id="ar"
@@ -415,7 +415,7 @@
           <rect class="box" x="520" y="40" width="190" height="90" rx="10" fill="var(--n-db)" />
           <text class="t" x="615" y="68" text-anchor="middle">PostgreSQL</text>
           <text class="s" x="615" y="88" text-anchor="middle">SOURCE OF TRUTH</text>
-          <text class="s" x="615" y="104" text-anchor="middle">campaign, email, sender</text>
+          <text class="s" x="615" y="104" text-anchor="middle">campaign (body once), email</text>
 
           <rect
             class="box"
@@ -427,10 +427,10 @@
             fill="var(--n-redis)"
           />
           <text class="t" x="615" y="258" text-anchor="middle">Redis (AOF on)</text>
-          <text class="s" x="615" y="278" text-anchor="middle">BullMQ delayed jobs</text>
+          <text class="s" x="615" y="278" text-anchor="middle">BullMQ jobs, next 6 h only</text>
           <text class="s" x="615" y="294" text-anchor="middle">Lua: slot + quotas</text>
           <text class="s" x="615" y="310" text-anchor="middle">receipts, leader lock</text>
-          <text class="s" x="615" y="326" text-anchor="middle">pub/sub, HTTP limits</text>
+          <text class="s" x="615" y="326" text-anchor="middle">pub/sub + event log (replay)</text>
 
           <rect class="box" x="790" y="230" width="180" height="130" rx="10" fill="var(--n-work)" />
           <text class="t" x="880" y="258" text-anchor="middle">Worker(s)</text>
@@ -441,7 +441,8 @@
 
           <rect class="box" x="1030" y="60" width="150" height="80" rx="10" fill="var(--n-ext)" />
           <text class="t" x="1105" y="90" text-anchor="middle">Ethereal SMTP</text>
-          <text class="s" x="1105" y="110" text-anchor="middle">fake inbox</text>
+          <text class="s" x="1105" y="108" text-anchor="middle">fake inbox</text>
+          <text class="s" x="1105" y="126" text-anchor="middle">own login per sender</text>
 
           <rect class="box" x="1030" y="250" width="150" height="80" rx="10" fill="var(--n-ext)" />
           <text class="t" x="1105" y="280" text-anchor="middle">Slack</text>
@@ -466,7 +467,7 @@
             setInterval + Redis leader lock
           </text>
           <text class="s" x="530" y="524" text-anchor="middle">
-            every SCHEDULED row must have a job
+            due in 6 h: must have a job; drains outbox
           </text>
 
           <path class="ln" d="M170 280 L260 280" />
@@ -494,7 +495,27 @@
           <path class="ln" d="M560 460 L560 360" />
           <text class="s" x="566" y="415">re-add</text>
 
-          <text class="s" x="20" y="580">
+          <rect class="box" x="400" y="600" width="260" height="70" rx="10" fill="var(--n-db)" />
+          <text class="t" x="530" y="628" text-anchor="middle">Search outbox (Postgres)</text>
+          <text class="s" x="530" y="648" text-anchor="middle">
+            written in the schedule transaction
+          </text>
+          <path class="dl" d="M530 550 L530 600" />
+          <text class="s" x="538" y="582">drains</text>
+
+          <rect class="box" x="720" y="600" width="260" height="70" rx="10" fill="var(--n-db)" />
+          <text class="t" x="850" y="628" text-anchor="middle">Suppression list (Postgres)</text>
+          <text class="s" x="850" y="648" text-anchor="middle">unsubscribe, complaint, bounce</text>
+          <path class="ln" d="M860 360 L860 600" />
+          <text class="s" x="868" y="520">skip suppressed</text>
+
+          <rect class="box" x="1030" y="600" width="150" height="70" rx="10" fill="var(--n-ext)" />
+          <text class="t" x="1105" y="628" text-anchor="middle">Recipient</text>
+          <text class="s" x="1105" y="648" text-anchor="middle">unsubscribe link</text>
+          <path class="dl" d="M1030 635 L980 635" />
+          <text class="s" x="988" y="625">POST</text>
+
+          <text class="s" x="20" y="700">
             Solid = request/command. Dashed = push. Reconciler also reads Postgres (not drawn,
             avoids clutter).
           </text>
