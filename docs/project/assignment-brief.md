@@ -123,7 +123,7 @@ Fill in as work is verified. Audited against the repo on 10 Nov 2026.
 | API schedule + Postgres store                                 | verified 10 Nov 2026 (real stack)                                                              |
 | BullMQ delayed jobs, no cron                                  | verified 10 Nov 2026 (jobs use delay; no cron libs; reconciler uses setInterval + leader lock) |
 | Ethereal SMTP, multiple senders                               | verified 10 Nov 2026 (sent via worker)                                                         |
-| Restart persistence                                           | verified 10 Nov 2026 (kill -9 API+worker, 3/3 sent, attempts=1)                                |
+| Restart persistence                                           | verified 10 Nov 2026 twice (kill -9 API+worker; future emails sent on time, attempts=1)        |
 | Idempotency                                                   | covered by integration tests                                                                   |
 | Worker concurrency (env)                                      | verified 10 Nov 2026 (WORKER_CONCURRENCY, default 8; 37 integration tests pass)                |
 | Min delay between sends (documented)                          | verified 10 Nov 2026 (MIN_SEND_INTERVAL_MS=2000, in README config table)                       |

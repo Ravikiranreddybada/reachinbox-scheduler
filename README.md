@@ -97,7 +97,7 @@ Throughput scales with the number of senders, because spacing is per sender, not
 
 ## Run locally
 
-Requirements: Node.js 20+, pnpm 9+, Docker.
+Requirements: Node.js 20+, pnpm 11 (pinned in `packageManager`; run `corepack enable` once), Docker.
 
 ```bash
 cp .env.example .env              # then fill in credentials (see below)
