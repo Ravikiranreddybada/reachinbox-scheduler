@@ -42,7 +42,11 @@ export async function notifyQuotaReached(alert: QuotaAlert): Promise<void> {
       where: { userId: alert.userId },
       select: { webhookUrl: true },
     });
-    if (!connection) return;
+    if (!connection) {
+      // Not connected: do not spend this hour's alert, so connecting later still alerts.
+      await redis.del(onceKey).catch(() => undefined);
+      return;
+    }
     const resumes = new Date(alert.resumesAt).toISOString().replace('.000Z', 'Z');
     const response = await fetch(decryptSecret(connection.webhookUrl), {
       method: 'POST',

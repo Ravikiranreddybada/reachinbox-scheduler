@@ -64,6 +64,17 @@ describe('notifyQuotaReached (real Redis + Postgres, fake Slack)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('alerts after connecting later in the same hour as a skipped alert', async () => {
+    await prisma.slackConnection.delete({ where: { userId: alert.userId } });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    await notifyQuotaReached(alert);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await connect();
+    await notifyQuotaReached(alert);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('alerts again after reconnect in a new hour', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
