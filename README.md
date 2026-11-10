@@ -26,25 +26,29 @@ flowchart LR
   UI[Next.js dashboard] -- cookie session / JSON --> API[Express API replicas]
   UI -- Server-Sent Events --> API
   API -- 1 commit campaign + emails --> DB[(PostgreSQL · source of truth)]
-  API -- 2 publish jobs, jobId = emailId --> Q[[BullMQ email-delivery]]
+  API -- 2 publish jobs due within the horizon, jobId = emailId --> Q[[BullMQ email-delivery]]
+  API -- same transaction --> OB[(search outbox)]
   Q --- R[(Redis AOF)]
   W[Worker replicas] --> Q
   W -- reserve slot · Lua --> R
   W -- CAS claim / final state --> DB
-  W -- send --> SMTP[Ethereal SMTP]
+  W -- skip suppressed recipients --> DB
+  W -- send, own SMTP login per sender --> SMTP[Ethereal SMTP]
   W -- status events --> PS{{Redis pub/sub}} --> API
   W -- quota alert --> SLACK[Slack webhook]
   W & API --> SQ[[search-sync queue]] --> ES[(Elasticsearch projection)]
-  REC[Reconciler · leader lock] -. repairs .-> Q
+  REC[Reconciler · leader lock · API and worker] -. repairs and queues far-future emails .-> Q
+  REC -. drains .-> OB
 ```
 
 The life of one email:
 
 ```text
-API commit ─► job delayed until scheduledAt
+API commit ─► job delayed until scheduledAt (only if due within the horizon; else reconciler queues it later)
            ─► worker: receipt? ── yes ─► mark SENT (no resend)
                        │ no
                        ▼
+              recipient suppressed? ─► CANCELLED (no quota, no SMTP)
               reserve slot (Lua: pacing + 3 hourly quotas)
                  ├─ quota full ─► delay until the oldest send leaves the 1-hour window (+jitter), Slack alert once per hour
                  ├─ slot later ─► delay until slot (quota already charged)
@@ -52,7 +56,8 @@ API commit ─► job delayed until scheduledAt
               start guard (real send starts ≥ interval apart)
               CAS claim  SCHEDULED → PROCESSING  (one winner)
               SMTP send ─► receipt in Redis ─► SENT in PostgreSQL ─► SSE + search sync
-                 └─ SMTP error ─► SCHEDULED + BullMQ backoff, or FAILED after 5 attempts
+                 ├─ temporary SMTP error ─► SCHEDULED + BullMQ backoff, or FAILED after 5 attempts
+                 └─ permanent 5xx ─► FAILED at once; 550/551/553/554 also suppress the address
 ```
 
 ### How scheduling works
@@ -75,7 +80,7 @@ API commit ─► job delayed until scheduledAt
 - **Concurrency:** `WORKER_CONCURRENCY` jobs run in parallel per worker process. Many worker processes are allowed. A row claim has one winner, so parallel jobs are safe.
 - **Delay between sends:** `MIN_SEND_INTERVAL_MS` (default 2000) per sender, enforced in Redis across all workers.
 - **Hourly limits:** `MAX_EMAILS_PER_HOUR_PER_SENDER` (plus tenant and global caps) are sliding-window counters in Redis, changed by one Lua script. Not in memory.
-- **Over the limit:** the job is not dropped or failed. It is delayed until the oldest counted send leaves the hour window, so order is kept as much as possible. The first hit per hour sends a Slack message (if Slack is connected; if not, nothing happens and nothing crashes).
+- **Over the limit:** the job is not dropped or failed. It is delayed until the oldest counted send leaves the hour window, so order is kept as much as possible. The first hit per hour sends a Slack message. If Slack is not connected, nothing happens and nothing crashes, and the hour's alert is kept, so connecting Slack later in the same hour still alerts.
 - **1000+ emails at once:** all jobs are accepted and queued. Pacing and caps spread them over time.
 
 Read more: [documentation index](docs/README.md), [architecture and failure matrix](docs/architecture/overview.md), [decision records](docs/adr/), [OpenAPI contract](docs/api/openapi.yaml), [demo script](docs/guides/demo-script.md), [assignment checklist](docs/project/assignment-brief.md).

@@ -504,10 +504,14 @@
             <b>1</b> Browser sends <code>POST /api/emails</code> with sender, recipients, subject,
             body, start time, delay, hourly limit, idempotency key.
           </li>
-          <li><b>2</b> API saves campaign + all email rows in <b>one DB transaction</b>.</li>
           <li>
-            <b>3</b> Only after commit, API adds one BullMQ delayed job per email. Job ID = email
-            ID.
+            <b>2</b> API saves campaign (body once) + all email rows + search-outbox rows in
+            <b>one DB transaction</b>.
+          </li>
+          <li>
+            <b>3</b> Only after commit, API adds a BullMQ delayed job for each email due within the
+            6 h horizon. Job ID = email ID. Later emails wait in Postgres until the reconciler
+            queues them.
           </li>
           <li><b>4</b> When a job is due, a worker takes it from Redis.</li>
           <li>
@@ -517,8 +521,14 @@
             <b>6</b> Worker asks a Redis Lua script: "which slot may I send in, is quota left?"
             Writes receipt after SMTP.
           </li>
-          <li><b>7</b> Worker sends via Ethereal SMTP.</li>
-          <li><b>8</b> If a limit is hit, worker posts to Slack (once per hour per scope).</li>
+          <li>
+            <b>7</b> Worker skips suppressed recipients, then sends via Ethereal SMTP (the sender's
+            own login if set) with an unsubscribe link.
+          </li>
+          <li>
+            <b>8</b> If a limit is hit, worker posts to Slack (once per hour per scope). Not
+            connected: no post, and connecting later in the hour still alerts.
+          </li>
           <li>
             <b>9</b> Worker queues a search-sync job; another worker bulk-indexes into
             Elasticsearch.
