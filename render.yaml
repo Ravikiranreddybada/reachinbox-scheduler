@@ -1,0 +1,62 @@
+# Free-tier hosting: one web service runs the API and the delivery worker (RUN_WORKER=true).
+# Postgres is on Neon (DATABASE_URL). Elasticsearch is off (SEARCH_ENABLED=false).
+# An uptime pinger on /health/live keeps the free service awake so delayed jobs fire on time.
+services:
+  - type: web
+    name: reachinbox-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "npx prisma migrate deploy --schema prisma/schema.prisma && node dist/server.js"
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: 10000
+      - key: RUN_WORKER
+        value: "true"
+      - key: SEARCH_ENABLED
+        value: "false"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: reachinbox-redis
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: API_PUBLIC_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: SLACK_CLIENT_ID
+        sync: false
+      - key: SLACK_CLIENT_SECRET
+        sync: false
+      - key: SLACK_REDIRECT_URI
+        sync: false
+      - key: ETHEREAL_USER
+        sync: false
+      - key: ETHEREAL_PASSWORD
+        sync: false
+      - key: BULL_BOARD_ADMIN_EMAILS
+        sync: false
+
+  - type: keyvalue
+    name: reachinbox-redis
+    plan: free
+    region: oregon
+    maxmemoryPolicy: noeviction
+    ipAllowList: []

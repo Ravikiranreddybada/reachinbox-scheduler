@@ -14,7 +14,7 @@ import {
 } from './workers/emailWorker.js';
 
 const delivery = createDeliveryWorker();
-const searchSync = createSearchSyncWorker();
+const searchSync = env.SEARCH_ENABLED ? createSearchSyncWorker() : null;
 
 const stopReconcileLoop = startReconcileLoop();
 
@@ -22,7 +22,7 @@ const shutdown = installShutdown([
   { name: 'reconcile-loop', close: async () => stopReconcileLoop() },
   // Worker.close() waits for in-flight jobs, so no send is cut off mid-way.
   { name: 'delivery-worker', close: () => delivery.close() },
-  { name: 'search-worker', close: () => searchSync.close() },
+  { name: 'search-worker', close: async () => void (await searchSync?.close()) },
   { name: 'queues', close: () => Promise.all([emailQueue.close(), searchSyncQueue.close()]) },
   { name: 'smtp', close: async () => closeTransports() },
   { name: 'postgres', close: () => prisma.$disconnect() },
@@ -33,17 +33,19 @@ const shutdown = installShutdown([
 async function start() {
   // Fail fast on bad SMTP credentials instead of burning retries on every job.
   await verifyDeliveryTransport();
-  const searchReady = await ensureSearchIndex()
-    .then(() => true)
-    .catch((error) => {
-      logger.warn({ event: 'search.startup_degraded', err: error });
-      return false;
-    });
+  const searchReady =
+    env.SEARCH_ENABLED &&
+    (await ensureSearchIndex()
+      .then(() => true)
+      .catch((error) => {
+        logger.warn({ event: 'search.startup_degraded', err: error });
+        return false;
+      }));
   // Hourly quotas live in Redis; rebuild them from PostgreSQL if Redis restarted empty.
   await ensureQuotaState();
   const recovery = await reconcileOnce();
   void delivery.run();
-  void searchSync.run();
+  if (searchSync) void searchSync.run();
   logger.info({
     event: 'worker.started',
     concurrency: env.WORKER_CONCURRENCY,

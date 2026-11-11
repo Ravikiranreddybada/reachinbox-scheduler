@@ -80,7 +80,7 @@ export async function enqueueDeliveries(emails: Array<{ id: string; scheduledAt:
  * (returns false in that case).
  */
 export async function enqueueSearchSync(emailIds: string[]): Promise<boolean> {
-  if (!emailIds.length) return true;
+  if (!emailIds.length || !env.SEARCH_ENABLED) return true;
   try {
     await searchSyncQueue.addBulk(
       chunk(emailIds).map((ids) => ({ name: 'sync' as const, data: { emailIds: ids } })),
@@ -101,6 +101,7 @@ export async function enqueueSearchSync(emailIds: string[]): Promise<boolean> {
 /** Moves parked search-sync work into the queue. Returns how many IDs were published. */
 export async function drainSearchOutbox(batch = 1000): Promise<number> {
   let drained = 0;
+  if (!env.SEARCH_ENABLED) return drained;
   for (;;) {
     const rows = await prisma.searchOutbox.findMany({ orderBy: { id: 'asc' }, take: batch });
     if (!rows.length) return drained;

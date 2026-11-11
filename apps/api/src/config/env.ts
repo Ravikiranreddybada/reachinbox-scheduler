@@ -14,6 +14,12 @@ const optionalString = z
   .optional()
   .transform((value) => (value?.trim() ? value.trim() : undefined));
 
+const boolFlag = (fallback: boolean) =>
+  z
+    .enum(['true', 'false'])
+    .default(fallback ? 'true' : 'false')
+    .transform((value) => value === 'true');
+
 const schema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -87,6 +93,10 @@ const schema = z
       .int()
       .min(60_000)
       .default(6 * 3_600_000),
+    /** Run the delivery worker inside the API process (single-service hosting). */
+    RUN_WORKER: boolFlag(false),
+    /** When false, nothing is indexed or searched and no Elasticsearch is needed. */
+    SEARCH_ENABLED: boolFlag(true),
     SLACK_CLIENT_ID: optionalString,
     SLACK_CLIENT_SECRET: optionalString,
     SLACK_REDIRECT_URI: optionalString,
