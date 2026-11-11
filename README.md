@@ -16,7 +16,7 @@ A durable, horizontally scalable email scheduler with a live dashboard.
 ![Tests](https://img.shields.io/badge/tests-100_passing-2EA44F)
 ![No cron](https://img.shields.io/badge/cron-none-critical)
 
-[Quick start](#-quick-start) · [Architecture](#-architecture) · [Assignment checklist](#-assignment-checklist) · [Configuration](#-configuration) · [Trade-offs](#-trade-offs-stated-plainly)
+[Quick start](#-quick-start) · [Architecture](#-architecture) · [Configuration](#-configuration) · [Trade-offs](#-trade-offs-stated-plainly)
 
 </div>
 
@@ -106,50 +106,7 @@ API commit ─► job delayed until scheduledAt (only if due within the horizon;
 - **Over the limit:** the job is not dropped or failed. It is delayed until the oldest counted send leaves the hour window, so order is kept as much as possible. The first hit per hour sends a Slack message. If Slack is not connected, nothing happens and nothing crashes, and the hour's alert is kept, so connecting Slack later in the same hour still alerts.
 - **1000+ emails at once:** all jobs are accepted and queued. Pacing and caps spread them over time.
 
-Read more: [documentation index](docs/README.md), [architecture and failure matrix](docs/architecture/overview.md), [decision records](docs/adr/), [OpenAPI contract](docs/api/openapi.yaml), [demo script](docs/guides/demo-script.md), [assignment checklist](docs/project/assignment-brief.md).
-
-## 🎯 Assignment checklist
-
-Every requirement from the brief, with where it lives and how it is proven.
-
-| Requirement                                                                        | Status | Where / proof                                                                                |
-| ---------------------------------------------------------------------------------- | :----: | -------------------------------------------------------------------------------------------- |
-| API to accept send requests, stored in a relational DB                             |   ✅   | `POST /api/emails` → PostgreSQL, one transaction                                             |
-| Schedule at a specific time with BullMQ delayed jobs, **no cron**                  |   ✅   | `delay = scheduledAt - now`; no cron libs; see [How scheduling works](#how-scheduling-works) |
-| Send through Ethereal SMTP, multiple senders                                       |   ✅   | Per-sender SMTP login, shared Ethereal fallback                                              |
-| Survive restarts, no lost jobs, no restart from scratch                            |   ✅   | AOF Redis + reconciler; `kill -9` demo, `attempts=1`                                         |
-| No duplicate sends (idempotency)                                                   |   ✅   | Job ID, CAS claim, delivery receipt; integration tests                                       |
-| Worker concurrency, configurable                                                   |   ✅   | `WORKER_CONCURRENCY`                                                                         |
-| Delay between sends, documented                                                    |   ✅   | `MIN_SEND_INTERVAL_MS` = 2000 ms default ([config](#-configuration))                         |
-| Hourly limit global and per sender, from env, Redis counters                       |   ✅   | `MAX_EMAILS_PER_HOUR_*`, Lua sliding window                                                  |
-| Safe across many workers                                                           |   ✅   | All counters in Redis; 200-caller test                                                       |
-| Over limit: never drop, move to next window, keep order                            |   ✅   | Delay until oldest send leaves the window                                                    |
-| Slack OAuth connect, live message at limit, disconnect/reconnect safe              |   ✅   | Real alert verified in `#all-toolforge`                                                      |
-| Behaviour under 1000+ emails                                                       |   ✅   | Accepted at once, spread by pacing; load test 2,000                                          |
-| Elasticsearch indexing and search                                                  |   ✅   | `emails` alias, fuzzy search in UI                                                           |
-| Live BullMQ dashboard                                                              |   ✅   | Bull Board at `/admin/queues`                                                                |
-| Google login (real OAuth), name, email, avatar, logout                             |   ✅   | Verified with a real Google account                                                          |
-| Dashboard: Scheduled and Sent tabs, Compose button                                 |   ✅   | Matches the Figma                                                                            |
-| Compose: subject, body, CSV/text leads with count, start time, delay, hourly limit |   ✅   | Compose page                                                                                 |
-| Lists with loading, empty and error states                                         |   ✅   | Both tables                                                                                  |
-| Clean frontend: reusable components, types, toasts                                 |   ✅   | `apps/web/components`, `apps/web/lib`                                                        |
-| README: run backend, run frontend, Ethereal and env, architecture, features        |   ✅   | This file                                                                                    |
-| README: assumptions, shortcuts, trade-offs                                         |   ✅   | Sections below                                                                               |
-| Demo video (max 5 min)                                                             |   ⏳   | Owner: you. Script: [demo-script](docs/guides/demo-script.md)                                |
-| Private repo, access for Mitrajit and Yadav036                                     |   ⏳   | Owner: you                                                                                   |
-| ClickUp form                                                                       |   ⏳   | Owner: you                                                                                   |
-
-Live status per item: [assignment brief](docs/project/assignment-brief.md#status-tracker).
-
-## 🎬 Demo in 5 minutes
-
-1. Sign in with Google, open **Compose**, upload a CSV, set start time, delay and hourly limit, press **Schedule**.
-2. Watch **Scheduled** turn into **Sent**, live. Search a subject (try a typo).
-3. Set a low sender cap, schedule 3 emails: 1 sends, a **Slack message** arrives, 2 wait for the next window.
-4. `kill -9` API and worker with future emails pending. Restart. They still send on time, once.
-5. Open `/admin/queues` for the live queue view.
-
-Full script: [docs/guides/demo-script.md](docs/guides/demo-script.md).
+Read more: [architecture and failure matrix](docs/architecture/overview.md), [decision records](docs/adr/), [OpenAPI contract](docs/api/openapi.yaml).
 
 ## 📈 Measured
 
@@ -325,15 +282,14 @@ The integration suite proves, against real PostgreSQL and Redis: exactly-cap adm
 apps/
   api/                 Express API, BullMQ workers, Prisma      -> apps/api/README.md
     src/               application code                          -> apps/api/src/README.md
-    prisma/            schema and committed migrations           -> apps/api/prisma/README.md
-    scripts/           load test, Ethereal helper                -> apps/api/scripts/README.md
+    prisma/            schema and committed migrations
+    scripts/           load test, Ethereal helper
     test/              integration test setup and fixtures       -> apps/api/test/README.md
   web/                 Next.js dashboard (app/, components/, lib/) -> apps/web/README.md
-docs/                  all documentation                         -> docs/README.md
+docs/                  all documentation
   architecture/        guarantees, failure matrix, diagrams
   adr/                 decision records
   api/                 OpenAPI contract
-  guides/              demo script, local development, operations
-  project/             assignment brief
+  guides/              local development, operations
 docker-compose.yml     PostgreSQL, Redis, Elasticsearch (+ app profile)
 ```

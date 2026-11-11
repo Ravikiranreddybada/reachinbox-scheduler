@@ -12,3 +12,20 @@ docs/architecture/diagrams/system-architecture.architecture.json.snapshot.json
 
 # Local assistant settings
 .claude/
+
+# Local-only docs
+docs/architecture/explained.html
+CLAUDE.md
+apps/web/AGENTS.md
+docs/project/
+docs/guides/demo-script.md
+Figma Design given/
+docs/architecture/diagrams/system-architecture.architecture.json
+docs/architecture/diagrams/README.md
+docs/README.md
+docs/adr/README.md
+docs/api/README.md
+docs/architecture/README.md
+docs/guides/README.md
+apps/api/scripts/README.md
+apps/api/prisma/README.md

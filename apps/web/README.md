@@ -40,6 +40,6 @@ pnpm dev     # from repo root: API :4000 + web :3000
 
 ## Notes
 
-- Next.js version has breaking changes. See [AGENTS.md](AGENTS.md).
+- Next.js version has breaking changes.
 - Image: `Dockerfile`.
 - API contract: [../../docs/api/openapi.yaml](../../docs/api/openapi.yaml).

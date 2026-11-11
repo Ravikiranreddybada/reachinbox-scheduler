@@ -17,14 +17,14 @@ Variables: [root README → Configuration](../../README.md#configuration).
 
 ## Commands
 
-| Command                 | Does                                                                        |
-| ----------------------- | --------------------------------------------------------------------------- |
-| `pnpm test`             | Unit tests. No infra needed.                                                |
-| `pnpm test:integration` | Real PostgreSQL + Redis. Fresh schema, Redis DB 15.                         |
-| `pnpm typecheck`        | Strict type-check, src and tests.                                           |
-| `pnpm format:check`     | Prettier.                                                                   |
-| `pnpm verify`           | format + unit + typecheck + build. Run before a PR.                         |
-| `pnpm loadtest`         | Throughput and invariants. See [scripts](../../apps/api/scripts/README.md). |
+| Command                 | Does                                                |
+| ----------------------- | --------------------------------------------------- |
+| `pnpm test`             | Unit tests. No infra needed.                        |
+| `pnpm test:integration` | Real PostgreSQL + Redis. Fresh schema, Redis DB 15. |
+| `pnpm typecheck`        | Strict type-check, src and tests.                   |
+| `pnpm format:check`     | Prettier.                                           |
+| `pnpm verify`           | format + unit + typecheck + build. Run before a PR. |
+| `pnpm loadtest`         | Throughput and invariants.                          |
 
 ## Where code goes
 
@@ -40,7 +40,7 @@ See [apps/api/src/README.md](../../apps/api/src/README.md). Short form: pure rul
 
 1. Edit `apps/api/prisma/schema.prisma`.
 2. `pnpm --filter @reachinbox/api prisma:migrate:dev` (creates a migration).
-3. Commit the migration. Never edit an applied one. See [prisma README](../../apps/api/prisma/README.md).
+3. Commit the migration. Never edit an applied one.
 
 ## Test conventions
 

@@ -11,13 +11,13 @@ Express API and BullMQ workers. Two processes, scaled separately.
 
 ## Layout
 
-| Path                          | Content                        |
-| ----------------------------- | ------------------------------ |
-| [src/](src/README.md)         | Application code               |
-| [prisma/](prisma/README.md)   | Schema and migrations          |
-| [scripts/](scripts/README.md) | Load test, Ethereal helper     |
-| [test/](test/README.md)       | Integration setup and fixtures |
-| `Dockerfile`                  | Image for API and worker       |
+| Path                    | Content                        |
+| ----------------------- | ------------------------------ |
+| [src/](src/README.md)   | Application code               |
+| `prisma/`               | Schema and migrations          |
+| `scripts/`              | Load test, Ethereal helper     |
+| [test/](test/README.md) | Integration setup and fixtures |
+| `Dockerfile`            | Image for API and worker       |
 
 ## Scripts
 
