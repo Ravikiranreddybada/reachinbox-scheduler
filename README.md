@@ -1,10 +1,44 @@
-# ReachInbox Scheduler
+<div align="center">
 
-A durable, horizontally scalable email scheduler: an Express + TypeScript API, BullMQ workers on Redis, PostgreSQL as the source of truth, Elasticsearch search, Ethereal SMTP, and a Next.js dashboard with live updates.
+# 📬 ReachInbox Scheduler
 
-The design goal is simple to state and hard to get right: **an accepted email is never lost, never sent twice by the system's own doing, and never breaks a pacing or hourly limit, no matter how many API and worker replicas run.** Every one of those claims has a test that runs against real PostgreSQL and Redis.
+**Schedule thousands of emails. Lose none. Send none twice. Break no limit.**
 
-## Highlights
+A durable, horizontally scalable email scheduler with a live dashboard.
+
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Express](https://img.shields.io/badge/Express-API-000000?logo=express&logoColor=white)
+![BullMQ](https://img.shields.io/badge/BullMQ-delayed_jobs-E5322D)
+![Redis](https://img.shields.io/badge/Redis-AOF-DC382D?logo=redis&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-source_of_truth-4169E1?logo=postgresql&logoColor=white)
+![Elasticsearch](https://img.shields.io/badge/Elasticsearch-search-005571?logo=elasticsearch&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-dashboard-000000?logo=nextdotjs&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-100_passing-2EA44F)
+![No cron](https://img.shields.io/badge/cron-none-critical)
+
+[Quick start](#-quick-start) · [Architecture](#-architecture) · [Assignment checklist](#-assignment-checklist) · [Configuration](#-configuration) · [Trade-offs](#-trade-offs-stated-plainly)
+
+</div>
+
+---
+
+Stack: Express + TypeScript API, BullMQ workers on Redis, PostgreSQL as the source of truth, Elasticsearch search, Ethereal SMTP, Next.js dashboard with live updates, Google and Slack OAuth.
+
+> **The promise:** an accepted email is never lost, never sent twice by the system's own doing, and never breaks a pacing or hourly limit, no matter how many API and worker replicas run. Every claim has a test that runs against real PostgreSQL and Redis.
+
+## ✨ At a glance
+
+|                          |                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| ⏰ **No cron, ever**     | BullMQ delayed jobs only. The reconciler is a `setInterval` with a Redis leader lock.     |
+| 💾 **Survives restarts** | `kill -9` API + worker with future emails pending: they still send on time, once.         |
+| 🔒 **No duplicates**     | Job ID = email ID, compare-and-set claim, Redis delivery receipt.                         |
+| 🚦 **Rate limited**      | Per-sender spacing and sliding hourly caps in Redis (Lua). Overflow waits, never dropped. |
+| 🔔 **Slack alerts**      | Real OAuth. A live message the moment a sender hits its hourly cap.                       |
+| 🔎 **Search**            | Elasticsearch: fuzzy, prefix, highlights. Rebuildable from PostgreSQL.                    |
+| 📈 **Measured**          | ≈ 250 emails/s across 4 worker replicas, 0 of 2,000 sent twice.                           |
+
+## 🧠 Design highlights
 
 | Concern               | How it is solved                                                                                                                                                                                                                                                                                                                     |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -19,29 +53,18 @@ The design goal is simple to state and hard to get right: **an accepted email is
 | Security              | Google OAuth (verified email only) with signed state + nonce; JWT sessions with a Redis deny-list for instant logout; Slack webhook and token encrypted with AES-256-GCM; Origin + Fetch-Metadata CSRF checks; tenant filter on every query.                                                                                         |
 | Operations            | Structured pino logs with request IDs, `/health` (dependency latencies), `/health/live`, Prometheus `/metrics` (queue depth, oldest-job age, sends, deferrals, prevented duplicates, lease reclaims), Bull Board for operators, graceful shutdown with a deadline.                                                                   |
 
-## Architecture
+## 🏗 Architecture
 
-```mermaid
-flowchart LR
-  UI[Next.js dashboard] -- cookie session / JSON --> API[Express API replicas]
-  UI -- Server-Sent Events --> API
-  API -- 1 commit campaign + emails --> DB[(PostgreSQL · source of truth)]
-  API -- 2 publish jobs due within the horizon, jobId = emailId --> Q[[BullMQ email-delivery]]
-  API -- same transaction --> OB[(search outbox)]
-  Q --- R[(Redis AOF)]
-  W[Worker replicas] --> Q
-  W -- reserve slot · Lua --> R
-  W -- CAS claim / final state --> DB
-  W -- skip suppressed recipients --> DB
-  W -- send, own SMTP login per sender --> SMTP[Ethereal SMTP]
-  W -- status events --> PS{{Redis pub/sub}} --> API
-  W -- quota alert --> SLACK[Slack webhook]
-  W & API --> SQ[[search-sync queue]] --> ES[(Elasticsearch projection)]
-  REC[Reconciler · leader lock · API and worker] -. repairs and queues far-future emails .-> Q
-  REC -. drains .-> OB
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.png">
+  <img alt="ReachInbox architecture: Next.js dashboard, Express API, BullMQ on Redis, email worker, PostgreSQL, Elasticsearch, Slack, Ethereal SMTP, reconciler, search outbox and suppression list" src="docs/assets/architecture-light.png">
+</picture>
 
-The life of one email:
+> Interactive version with pan, zoom and trace: open [`docs/architecture/diagrams/system-architecture.html`](docs/architecture/diagrams/system-architecture.html) in a browser.
+
+**How to read it:** green = our code, purple = data stores, orange = the queue, red = security and suppression, grey = outside services. Dashed lines are side paths (alerts, search sync, repairs).
+
+### The life of one email
 
 ```text
 API commit ─► job delayed until scheduledAt (only if due within the horizon; else reconciler queues it later)
@@ -85,7 +108,50 @@ API commit ─► job delayed until scheduledAt (only if due within the horizon;
 
 Read more: [documentation index](docs/README.md), [architecture and failure matrix](docs/architecture/overview.md), [decision records](docs/adr/), [OpenAPI contract](docs/api/openapi.yaml), [demo script](docs/guides/demo-script.md), [assignment checklist](docs/project/assignment-brief.md).
 
-## Measured
+## 🎯 Assignment checklist
+
+Every requirement from the brief, with where it lives and how it is proven.
+
+| Requirement                                                                        | Status | Where / proof                                                                                |
+| ---------------------------------------------------------------------------------- | :----: | -------------------------------------------------------------------------------------------- |
+| API to accept send requests, stored in a relational DB                             |   ✅   | `POST /api/emails` → PostgreSQL, one transaction                                             |
+| Schedule at a specific time with BullMQ delayed jobs, **no cron**                  |   ✅   | `delay = scheduledAt - now`; no cron libs; see [How scheduling works](#how-scheduling-works) |
+| Send through Ethereal SMTP, multiple senders                                       |   ✅   | Per-sender SMTP login, shared Ethereal fallback                                              |
+| Survive restarts, no lost jobs, no restart from scratch                            |   ✅   | AOF Redis + reconciler; `kill -9` demo, `attempts=1`                                         |
+| No duplicate sends (idempotency)                                                   |   ✅   | Job ID, CAS claim, delivery receipt; integration tests                                       |
+| Worker concurrency, configurable                                                   |   ✅   | `WORKER_CONCURRENCY`                                                                         |
+| Delay between sends, documented                                                    |   ✅   | `MIN_SEND_INTERVAL_MS` = 2000 ms default ([config](#-configuration))                         |
+| Hourly limit global and per sender, from env, Redis counters                       |   ✅   | `MAX_EMAILS_PER_HOUR_*`, Lua sliding window                                                  |
+| Safe across many workers                                                           |   ✅   | All counters in Redis; 200-caller test                                                       |
+| Over limit: never drop, move to next window, keep order                            |   ✅   | Delay until oldest send leaves the window                                                    |
+| Slack OAuth connect, live message at limit, disconnect/reconnect safe              |   ✅   | Real alert verified in `#all-toolforge`                                                      |
+| Behaviour under 1000+ emails                                                       |   ✅   | Accepted at once, spread by pacing; load test 2,000                                          |
+| Elasticsearch indexing and search                                                  |   ✅   | `emails` alias, fuzzy search in UI                                                           |
+| Live BullMQ dashboard                                                              |   ✅   | Bull Board at `/admin/queues`                                                                |
+| Google login (real OAuth), name, email, avatar, logout                             |   ✅   | Verified with a real Google account                                                          |
+| Dashboard: Scheduled and Sent tabs, Compose button                                 |   ✅   | Matches the Figma                                                                            |
+| Compose: subject, body, CSV/text leads with count, start time, delay, hourly limit |   ✅   | Compose page                                                                                 |
+| Lists with loading, empty and error states                                         |   ✅   | Both tables                                                                                  |
+| Clean frontend: reusable components, types, toasts                                 |   ✅   | `apps/web/components`, `apps/web/lib`                                                        |
+| README: run backend, run frontend, Ethereal and env, architecture, features        |   ✅   | This file                                                                                    |
+| README: assumptions, shortcuts, trade-offs                                         |   ✅   | Sections below                                                                               |
+| Demo video (max 5 min)                                                             |   ⏳   | Owner: you. Script: [demo-script](docs/guides/demo-script.md)                                |
+| Private repo, access for Mitrajit and Yadav036                                     |   ⏳   | Owner: you                                                                                   |
+| ClickUp form                                                                       |   ⏳   | Owner: you                                                                                   |
+
+Live status per item: [assignment brief](docs/project/assignment-brief.md#status-tracker).
+
+## 🎬 Demo in 5 minutes
+
+1. Sign in with Google, open **Compose**, upload a CSV, set start time, delay and hourly limit, press **Schedule**.
+2. Watch **Scheduled** turn into **Sent**, live. Search a subject (try a typo).
+3. Set a low sender cap, schedule 3 emails: 1 sends, a **Slack message** arrives, 2 wait for the next window.
+4. `kill -9` API and worker with future emails pending. Restart. They still send on time, once.
+5. Open `/admin/queues` for the live queue view.
+
+Full script: [docs/guides/demo-script.md](docs/guides/demo-script.md).
+
+## 📈 Measured
 
 `pnpm loadtest --emails 2000 --senders 20 --replicas 4 --concurrency 16 --interval 50` (four worker replicas in one process competing through Redis, in-process SMTP stub, laptop):
 
@@ -97,7 +163,7 @@ Read more: [documentation index](docs/README.md), [architecture and failure matr
 
 Throughput scales with the number of senders, because spacing is per sender, not global. The load test fails if any invariant breaks.
 
-## Features done
+## ✅ Features done
 
 **Backend** (scheduler, persistence, rate limiting, concurrency)
 
@@ -124,14 +190,14 @@ Throughput scales with the number of senders, because spacing is per sender, not
 - Compose: subject, rich-text body, CSV/text lead upload with address count, start time, delay between emails, hourly limit.
 - Slack connect card; email detail page with star, archive, delete and retry.
 
-## Assumptions and shortcuts
+## 📝 Assumptions and shortcuts
 
 - Local demo only. It runs on localhost with Docker for PostgreSQL, Redis and Elasticsearch.
 - Ethereal is a fake inbox, so no real mail leaves the machine.
 - SMTP cannot be exactly-once; see the trade-offs below.
 - A send request is capped at 5,000 recipients.
 
-## Run locally
+## 🚀 Quick start
 
 Requirements: Node.js 20+, pnpm 11 (pinned in `packageManager`; run `corepack enable` once), Docker.
 
@@ -149,7 +215,7 @@ pnpm ethereal:account             # creates a free Ethereal account, prints 4 li
 3. Set `SESSION_SECRET` (≥ 32 characters, e.g. `openssl rand -base64 32`) and `DATA_ENCRYPTION_KEY` (required, `openssl rand -base64 32`). Elasticsearch runs with security on: keep `ELASTICSEARCH_USERNAME=elastic` and `ELASTICSEARCH_PASSWORD=reachinbox-dev` from `.env.example`.
 4. Add Google OAuth values: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Redirect URI: `http://localhost:4000/auth/google/callback`.
 5. Add Slack app values: `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`. Redirect URI: `http://localhost:4000/auth/slack/callback`.
-6. Tune limits if you want: `WORKER_CONCURRENCY`, `MIN_SEND_INTERVAL_MS`, `MAX_EMAILS_PER_HOUR_*`. Full list in [Configuration](#configuration).
+6. Tune limits if you want: `WORKER_CONCURRENCY`, `MIN_SEND_INTERVAL_MS`, `MAX_EMAILS_PER_HOUR_*`. Full list in [Configuration](#-configuration).
 
 The worker checks the SMTP login at start. It refuses to start with wrong Ethereal values.
 
@@ -185,7 +251,7 @@ docker compose --profile app up -d --build --scale worker=3
 
 Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000/health`, metrics `http://localhost:4000/metrics`, Bull Board `http://localhost:4000/admin/queues` (emails in `BULL_BOARD_ADMIN_EMAILS` only). Rebuild search from PostgreSQL with `pnpm reindex`.
 
-## Configuration
+## 🔧 Configuration
 
 | Variable                                                                                         | Purpose                                                                                                                       |
 | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -207,7 +273,7 @@ Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000
 | `BULL_BOARD_ADMIN_EMAILS`, `METRICS_TOKEN`                                                       | Operator access to Bull Board; bearer token for `/metrics`                                                                    |
 | `WEB_ORIGIN`, `API_PORT`, `LOG_LEVEL`                                                            | Browser origin, port, log level                                                                                               |
 
-## API
+## 🔌 API
 
 | Method & path                                                           | Purpose                                                                       |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -229,7 +295,7 @@ Useful URLs: dashboard `http://localhost:3000`, readiness `http://localhost:4000
 | `GET /auth/slack`, `DELETE /auth/slack`                                 | Connect / disconnect Slack alerts                                             |
 | `GET /health`, `/health/live`, `/metrics`, `/admin/queues`              | Operations                                                                    |
 
-## Verification
+## 🧪 Verification
 
 ```bash
 pnpm verify             # format, unit tests, strict type-check (src + tests), production builds
@@ -239,7 +305,7 @@ pnpm loadtest           # throughput and invariants with several competing worke
 
 The integration suite proves, against real PostgreSQL and Redis: exactly-cap admission under 200 concurrent callers; per-sender spacing; next-hour deferral without dropping work; independent campaign caps; tenant-wide caps and tenant isolation; slots charged to the correct hour at an hour boundary; single-winner claims; lease reclaim; receipt-based duplicate prevention; recovery after Redis loses jobs; HTTP idempotency under 10 concurrent requests; `409` on key reuse; CSRF rejection; campaign cancel; cross-tenant `404`. CI runs it on every push next to the unit suite and container image builds.
 
-## Trade-offs, stated plainly
+## 🧭 Trade-offs, stated plainly
 
 - **A crash mid-send fails the email; it is never resent.** SMTP has no idempotency key. If a worker dies after claiming an email, the system cannot know if SMTP accepted it. The claim marker (`processingStartedAt`) stays in PostgreSQL, so the next attempt marks the row `FAILED` ("outcome unknown") instead of sending a possible duplicate. Cost: one email may need a manual resend. A known SMTP error still retries normally. A Redis receipt also covers a PostgreSQL blip after SMTP accepted.
 - **Hourly caps are a sliding window.** Each quota is a Redis sorted set of send times, so no 60-minute span holds more than the cap, also across a clock-hour boundary. Cancelled emails and known SMTP failures give their quota back. A crash-abandoned email keeps it (it may have been sent).
@@ -253,7 +319,7 @@ The integration suite proves, against real PostgreSQL and Redis: exactly-cap adm
 - **Event replay is bounded.** Each user keeps the last 500 events for one hour. A client that was away longer gets a `resync` event and refetches the lists.
 - **Redis is the execution index, not the truth.** With AOF `everysec`, a Redis crash can lose one second of queue writes; the reconciler rebuilds those jobs from PostgreSQL.
 
-## Project structure
+## 🗂 Project structure
 
 ```text
 apps/

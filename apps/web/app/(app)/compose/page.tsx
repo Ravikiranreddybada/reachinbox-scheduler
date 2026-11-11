@@ -20,6 +20,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
+import { DateTimePicker } from '@/components/DateTimePicker';
 import { useApp } from '@/components/AppProvider';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { type EditorHandle, RichTextEditor } from '@/components/RichTextEditor';
@@ -94,7 +95,7 @@ export default function ComposePage() {
   const fromRef = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const pickRef = useRef<HTMLInputElement>(null);
+  const [panel, setPanel] = useState(false);
   const listRef = useRef<HTMLInputElement>(null);
   const editor = useRef<EditorHandle>(null);
   const toInput = useRef<HTMLInputElement>(null);
@@ -220,6 +221,7 @@ export default function ComposePage() {
   /* ----- schedule popover ----- */
   function openPopover() {
     setPending(scheduledFor ? toLocalInput(scheduledFor) : '');
+    setPanel(false);
     setPopover((open) => !open);
   }
   function applyPending() {
@@ -364,22 +366,24 @@ export default function ComposePage() {
             <button
               type="button"
               className="pick-btn"
-              onClick={() => pickRef.current?.showPicker?.()}
+              onClick={() => {
+                if (!panel && !pending) setPending(toLocalInput(new Date()));
+                setPanel((o) => !o);
+              }}
+              aria-expanded={panel}
               style={{ color: pending ? 'var(--ink)' : 'var(--muted)' }}
             >
               {pending ? scheduleLabel(new Date(pending)) : 'Pick date & time'}
               <Calendar size={18} strokeWidth={1.5} aria-hidden="true" />
             </button>
-            <input
-              ref={pickRef}
-              className="pick-native"
-              type="datetime-local"
-              value={pending}
-              min={toLocalInput(new Date())}
-              onChange={(e) => setPending(e.target.value)}
-              aria-label="Pick date and time"
-              tabIndex={-1}
-            />
+            {panel && (
+              <DateTimePicker
+                value={pending}
+                min={toLocalInput(new Date())}
+                onChange={setPending}
+                onDone={applyPending}
+              />
+            )}
           </div>
           {QUICK.map((option) => (
             <button

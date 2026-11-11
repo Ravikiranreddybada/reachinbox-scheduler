@@ -1694,3 +1694,123 @@ a.att-card:hover {
     animation-duration: 2.4s;
   }
 }
+
+/* ---------- Custom date/time picker (Done at bottom right) ---------- */
+.dtp {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  z-index: 60;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+}
+.dtp-body {
+  display: flex;
+  gap: 12px;
+}
+.dtp-cal {
+  flex: 1;
+  min-width: 0;
+}
+.dtp-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dtp-head span {
+  margin-right: auto;
+}
+.dtp-head button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+.dtp-head button:hover {
+  background: var(--field);
+}
+.dtp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+.dtp-dow {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 0;
+}
+.dtp-day {
+  height: 30px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.dtp-day:hover:not(:disabled),
+.dtp-col button:hover {
+  background: var(--field);
+}
+.dtp-day:disabled {
+  color: var(--muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.dtp-day[aria-pressed='true'],
+.dtp-col button[aria-pressed='true'] {
+  background: #2f6fed;
+  color: #fff;
+  font-weight: 600;
+}
+.dtp-cols {
+  display: flex;
+  gap: 4px;
+}
+.dtp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 52px;
+  max-height: 232px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.dtp-col button {
+  flex: none;
+  height: 32px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.dtp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.dtp-clear {
+  font-size: 13px;
+  color: #2f6fed;
+}
+.dtp-foot .btn {
+  height: 36px;
+  padding: 0 22px;
+}
+
+.dtp-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #c0392b;
+}
+.dtp-col button {
+  position: relative;
+}
+.dtp-col {
+  position: relative;
+}
